@@ -51,17 +51,17 @@ const STATUS_CONFIG: Record<TableStatus, { label: string; bg: string; border: st
 };
 
 const SECTION_LABELS: Record<string, string> = {
-  Window: "窗邊區",
-  Main: "主廳",
-  Patio: "露台",
-  Private: "包廂",
+  窗邊: "窗邊區",
+  主廳: "主廳",
+  露台: "露台",
+  包廂: "包廂",
 };
 
 const SECTIONS = [
-  { key: "Window", cols: "grid-cols-2" },
-  { key: "Main", cols: "grid-cols-3" },
-  { key: "Patio", cols: "grid-cols-2" },
-  { key: "Private", cols: "grid-cols-2" },
+  { key: "窗邊", cols: "grid-cols-2" },
+  { key: "主廳", cols: "grid-cols-3" },
+  { key: "露台", cols: "grid-cols-2" },
+  { key: "包廂", cols: "grid-cols-2" },
 ];
 
 const RESERVATION_STATUS_COLORS: Record<string, string> = {

@@ -10,9 +10,11 @@ import {
   Menu,
   X,
   LayoutGrid,
+  LogOut,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { useLogout } from "@/hooks/use-auth";
 
 const navItems = [
   { href: "/", label: "儀表板", icon: LayoutDashboard },
@@ -45,6 +47,26 @@ function NavLink({ href, label, icon: Icon, onClick }: { href: string; label: st
   );
 }
 
+function LogoutButton({ onClick }: { onClick?: () => void }) {
+  const logout = useLogout();
+
+  const handleLogout = async () => {
+    onClick?.();
+    await logout();
+  };
+
+  return (
+    <button
+      data-testid="button-logout"
+      onClick={handleLogout}
+      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 cursor-pointer select-none text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+    >
+      <LogOut className="h-4 w-4 shrink-0" />
+      登出
+    </button>
+  );
+}
+
 export default function Layout({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -64,8 +86,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <NavLink key={item.href} {...item} onClick={() => setMobileOpen(false)} />
         ))}
       </nav>
-      <div className="px-4 py-4 border-t border-sidebar-border">
-        <p className="text-xs text-muted-foreground">v1.0.0 &mdash; 今日班次</p>
+      <div className="px-3 py-3 border-t border-sidebar-border space-y-1">
+        <LogoutButton onClick={() => setMobileOpen(false)} />
+        <p className="text-xs text-muted-foreground px-3 pb-1">v1.0.0 &mdash; 今日班次</p>
       </div>
     </div>
   );

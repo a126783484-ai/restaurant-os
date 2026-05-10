@@ -1,4 +1,4 @@
-import { Switch, Route, Router as WouterRouter, Redirect, useLocation } from "wouter";
+import { Switch, Route, Router as WouterRouter, Redirect } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -14,22 +14,30 @@ import Staff from "@/pages/Staff";
 import Products from "@/pages/Products";
 import FloorPlan from "@/pages/FloorPlan";
 import NotFound from "@/pages/not-found";
+import { isAuthenticated, clearToken } from "@/hooks/use-auth";
+import { ApiError } from "@workspace/api-client-react";
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      retry: 1,
+      retry: (failureCount, error) => {
+        if (error instanceof ApiError && error.status === 401) return false;
+        return failureCount < 1;
+      },
       staleTime: 30_000,
+    },
+    mutations: {
+      onError: (error) => {
+        if (error instanceof ApiError && error.status === 401) {
+          clearToken();
+          window.location.href = `${import.meta.env.BASE_URL}login`;
+        }
+      },
     },
   },
 });
 
-function isAuthenticated(): boolean {
-  return !!localStorage.getItem("auth_token");
-}
-
 function AuthGuard({ children }: { children: React.ReactNode }) {
-  const [location] = useLocation();
   if (!isAuthenticated()) {
     return <Redirect to="/login" />;
   }

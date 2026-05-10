@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
+import { setToken } from "@/hooks/use-auth";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -25,7 +26,7 @@ export default function LoginPage() {
         return;
       }
       const data = await res.json();
-      localStorage.setItem("auth_token", data.token ?? "authenticated");
+      setToken(data.token ?? "authenticated");
       navigate("/");
     } catch {
       setError("Network error. Please try again.");

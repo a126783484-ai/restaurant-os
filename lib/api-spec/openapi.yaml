@@ -3,20 +3,38 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Restaurant OS API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: customers
+    description: Customer CRM
+  - name: reservations
+    description: Reservation management
+  - name: tables
+    description: Table management
+  - name: orders
+    description: Order management
+  - name: products
+    description: Menu products
+  - name: staff
+    description: Staff management
+  - name: shifts
+    description: Shift scheduling
+  - name: tasks
+    description: Task tracking
+  - name: dashboard
+    description: Dashboard analytics
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,13 +42,1059 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  # ─── CUSTOMERS ───────────────────────────────────────────────
+  /customers:
+    get:
+      operationId: listCustomers
+      tags: [customers]
+      summary: List all customers
+      parameters:
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: tag
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: List of customers
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Customer" }
+    post:
+      operationId: createCustomer
+      tags: [customers]
+      summary: Create a customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CustomerInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Customer" }
+
+  /customers/{id}:
+    get:
+      operationId: getCustomer
+      tags: [customers]
+      summary: Get a customer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Customer
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Customer" }
+        "404":
+          description: Not found
+    patch:
+      operationId: updateCustomer
+      tags: [customers]
+      summary: Update a customer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CustomerUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Customer" }
+    delete:
+      operationId: deleteCustomer
+      tags: [customers]
+      summary: Delete a customer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "204":
+          description: Deleted
+
+  /customers/{id}/visits:
+    get:
+      operationId: listCustomerVisits
+      tags: [customers]
+      summary: Get visit history for a customer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Visit list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Visit" }
+
+  /customers/{id}/add-points:
+    post:
+      operationId: addLoyaltyPoints
+      tags: [customers]
+      summary: Add loyalty points to a customer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoyaltyPointsInput" }
+      responses:
+        "200":
+          description: Updated customer
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Customer" }
+
+  # ─── TABLES ──────────────────────────────────────────────────
+  /tables:
+    get:
+      operationId: listTables
+      tags: [tables]
+      summary: List all tables
+      responses:
+        "200":
+          description: Tables
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Table" }
+    post:
+      operationId: createTable
+      tags: [tables]
+      summary: Create a table
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TableInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Table" }
+
+  /tables/{id}:
+    patch:
+      operationId: updateTable
+      tags: [tables]
+      summary: Update table status
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TableUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Table" }
+
+  # ─── RESERVATIONS ─────────────────────────────────────────────
+  /reservations:
+    get:
+      operationId: listReservations
+      tags: [reservations]
+      summary: List reservations
+      parameters:
+        - name: date
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Reservations
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Reservation" }
+    post:
+      operationId: createReservation
+      tags: [reservations]
+      summary: Create a reservation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReservationInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Reservation" }
+
+  /reservations/{id}:
+    get:
+      operationId: getReservation
+      tags: [reservations]
+      summary: Get a reservation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Reservation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Reservation" }
+    patch:
+      operationId: updateReservation
+      tags: [reservations]
+      summary: Update a reservation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReservationUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Reservation" }
+    delete:
+      operationId: deleteReservation
+      tags: [reservations]
+      summary: Cancel a reservation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "204":
+          description: Deleted
+
+  # ─── PRODUCTS ─────────────────────────────────────────────────
+  /products:
+    get:
+      operationId: listProducts
+      tags: [products]
+      summary: List menu products
+      parameters:
+        - name: category
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Products
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Product" }
+    post:
+      operationId: createProduct
+      tags: [products]
+      summary: Create a product
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProductInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Product" }
+
+  /products/{id}:
+    patch:
+      operationId: updateProduct
+      tags: [products]
+      summary: Update a product
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProductUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Product" }
+    delete:
+      operationId: deleteProduct
+      tags: [products]
+      summary: Delete a product
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "204":
+          description: Deleted
+
+  # ─── ORDERS ───────────────────────────────────────────────────
+  /orders:
+    get:
+      operationId: listOrders
+      tags: [orders]
+      summary: List orders
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: type
+          in: query
+          schema: { type: string }
+        - name: date
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Order" }
+    post:
+      operationId: createOrder
+      tags: [orders]
+      summary: Create an order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrderInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Order" }
+
+  /orders/{id}:
+    get:
+      operationId: getOrder
+      tags: [orders]
+      summary: Get an order with items
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Order with items
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderDetail" }
+    patch:
+      operationId: updateOrder
+      tags: [orders]
+      summary: Update order status or payment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrderUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Order" }
+
+  # ─── STAFF ────────────────────────────────────────────────────
+  /staff:
+    get:
+      operationId: listStaff
+      tags: [staff]
+      summary: List staff members
+      parameters:
+        - name: role
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Staff list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/StaffMember" }
+    post:
+      operationId: createStaff
+      tags: [staff]
+      summary: Add a staff member
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StaffInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StaffMember" }
+
+  /staff/{id}:
+    patch:
+      operationId: updateStaff
+      tags: [staff]
+      summary: Update a staff member
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StaffUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StaffMember" }
+    delete:
+      operationId: deleteStaff
+      tags: [staff]
+      summary: Remove a staff member
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "204":
+          description: Deleted
+
+  # ─── SHIFTS ───────────────────────────────────────────────────
+  /shifts:
+    get:
+      operationId: listShifts
+      tags: [shifts]
+      summary: List shifts
+      parameters:
+        - name: date
+          in: query
+          schema: { type: string }
+        - name: staffId
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Shifts
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Shift" }
+    post:
+      operationId: createShift
+      tags: [shifts]
+      summary: Create a shift
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ShiftInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Shift" }
+
+  /shifts/{id}:
+    patch:
+      operationId: updateShift
+      tags: [shifts]
+      summary: Update a shift
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ShiftUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Shift" }
+    delete:
+      operationId: deleteShift
+      tags: [shifts]
+      summary: Delete a shift
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "204":
+          description: Deleted
+
+  # ─── TASKS ────────────────────────────────────────────────────
+  /tasks:
+    get:
+      operationId: listTasks
+      tags: [tasks]
+      summary: List tasks
+      parameters:
+        - name: staffId
+          in: query
+          schema: { type: integer }
+        - name: status
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Task" }
+    post:
+      operationId: createTask
+      tags: [tasks]
+      summary: Create a task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TaskInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+
+  /tasks/{id}:
+    patch:
+      operationId: updateTask
+      tags: [tasks]
+      summary: Update a task
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TaskUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+    delete:
+      operationId: deleteTask
+      tags: [tasks]
+      summary: Delete a task
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "204":
+          description: Deleted
+
+  # ─── DASHBOARD ────────────────────────────────────────────────
+  /dashboard/summary:
+    get:
+      operationId: getDashboardSummary
+      tags: [dashboard]
+      summary: Get daily sales summary and KPIs
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DashboardSummary" }
+
+  /dashboard/top-products:
+    get:
+      operationId: getTopProducts
+      tags: [dashboard]
+      summary: Get top selling products
+      responses:
+        "200":
+          description: Top products
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TopProduct" }
+
+  /dashboard/customer-flow:
+    get:
+      operationId: getCustomerFlow
+      tags: [dashboard]
+      summary: Get customer flow by hour
+      responses:
+        "200":
+          description: Customer flow
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CustomerFlowPoint" }
+
+  /dashboard/recent-activity:
+    get:
+      operationId: getRecentActivity
+      tags: [dashboard]
+      summary: Get recent activity feed
+      responses:
+        "200":
+          description: Recent activity
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ActivityItem" }
+
 components:
   schemas:
     HealthStatus:
       type: object
+      required: [status]
       properties:
-        status:
-          type: string
-      required:
-        - status
+        status: { type: string }
 
+    # ── Customer ──
+    Customer:
+      type: object
+      required: [id, name, phone, email, loyaltyPoints, totalSpend, visitCount, tags, createdAt]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        phone: { type: string }
+        email: { type: ["string", "null"] }
+        loyaltyPoints: { type: integer }
+        totalSpend: { type: number }
+        visitCount: { type: integer }
+        tags: { type: array, items: { type: string } }
+        notes: { type: ["string", "null"] }
+        createdAt: { type: string }
+
+    CustomerInput:
+      type: object
+      required: [name, phone]
+      properties:
+        name: { type: string, minLength: 1 }
+        phone: { type: string, minLength: 1 }
+        email: { type: string }
+        tags: { type: array, items: { type: string } }
+        notes: { type: string }
+
+    CustomerUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        phone: { type: string }
+        email: { type: string }
+        tags: { type: array, items: { type: string } }
+        notes: { type: string }
+
+    LoyaltyPointsInput:
+      type: object
+      required: [points]
+      properties:
+        points: { type: integer }
+        reason: { type: string }
+
+    Visit:
+      type: object
+      required: [id, customerId, visitedAt, amount, orderType]
+      properties:
+        id: { type: integer }
+        customerId: { type: integer }
+        orderId: { type: ["integer", "null"] }
+        visitedAt: { type: string }
+        amount: { type: number }
+        orderType: { type: string }
+        notes: { type: ["string", "null"] }
+
+    # ── Table ──
+    Table:
+      type: object
+      required: [id, number, capacity, status, section]
+      properties:
+        id: { type: integer }
+        number: { type: integer }
+        capacity: { type: integer }
+        status: { type: string }
+        section: { type: string }
+        notes: { type: ["string", "null"] }
+
+    TableInput:
+      type: object
+      required: [number, capacity, section]
+      properties:
+        number: { type: integer }
+        capacity: { type: integer }
+        section: { type: string }
+        notes: { type: string }
+
+    TableUpdate:
+      type: object
+      properties:
+        status: { type: string }
+        capacity: { type: integer }
+        section: { type: string }
+        notes: { type: string }
+
+    # ── Reservation ──
+    Reservation:
+      type: object
+      required: [id, customerName, customerPhone, partySize, reservedAt, status, createdAt]
+      properties:
+        id: { type: integer }
+        customerId: { type: ["integer", "null"] }
+        customerName: { type: string }
+        customerPhone: { type: string }
+        tableId: { type: ["integer", "null"] }
+        partySize: { type: integer }
+        reservedAt: { type: string }
+        status: { type: string }
+        notes: { type: ["string", "null"] }
+        createdAt: { type: string }
+
+    ReservationInput:
+      type: object
+      required: [customerName, customerPhone, partySize, reservedAt]
+      properties:
+        customerId: { type: integer }
+        customerName: { type: string, minLength: 1 }
+        customerPhone: { type: string, minLength: 1 }
+        tableId: { type: integer }
+        partySize: { type: integer }
+        reservedAt: { type: string }
+        notes: { type: string }
+
+    ReservationUpdate:
+      type: object
+      properties:
+        tableId: { type: integer }
+        partySize: { type: integer }
+        reservedAt: { type: string }
+        status: { type: string }
+        notes: { type: string }
+
+    # ── Product ──
+    Product:
+      type: object
+      required: [id, name, price, category, available, createdAt]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        price: { type: number }
+        category: { type: string }
+        description: { type: ["string", "null"] }
+        available: { type: boolean }
+        createdAt: { type: string }
+
+    ProductInput:
+      type: object
+      required: [name, price, category]
+      properties:
+        name: { type: string, minLength: 1 }
+        price: { type: number }
+        category: { type: string }
+        description: { type: string }
+        available: { type: boolean }
+
+    ProductUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        price: { type: number }
+        category: { type: string }
+        description: { type: string }
+        available: { type: boolean }
+
+    # ── Order ──
+    Order:
+      type: object
+      required: [id, type, status, paymentStatus, totalAmount, createdAt]
+      properties:
+        id: { type: integer }
+        customerId: { type: ["integer", "null"] }
+        tableId: { type: ["integer", "null"] }
+        type: { type: string }
+        status: { type: string }
+        paymentStatus: { type: string }
+        paymentMethod: { type: ["string", "null"] }
+        totalAmount: { type: number }
+        notes: { type: ["string", "null"] }
+        createdAt: { type: string }
+
+    OrderItem:
+      type: object
+      required: [id, orderId, productId, productName, quantity, unitPrice, subtotal]
+      properties:
+        id: { type: integer }
+        orderId: { type: integer }
+        productId: { type: integer }
+        productName: { type: string }
+        quantity: { type: integer }
+        unitPrice: { type: number }
+        subtotal: { type: number }
+        notes: { type: ["string", "null"] }
+
+    OrderDetail:
+      type: object
+      required: [id, type, status, paymentStatus, totalAmount, items, createdAt]
+      properties:
+        id: { type: integer }
+        customerId: { type: ["integer", "null"] }
+        tableId: { type: ["integer", "null"] }
+        type: { type: string }
+        status: { type: string }
+        paymentStatus: { type: string }
+        paymentMethod: { type: ["string", "null"] }
+        totalAmount: { type: number }
+        notes: { type: ["string", "null"] }
+        createdAt: { type: string }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/OrderItem" }
+
+    OrderInput:
+      type: object
+      required: [type, items]
+      properties:
+        customerId: { type: integer }
+        tableId: { type: integer }
+        type: { type: string }
+        notes: { type: string }
+        items:
+          type: array
+          items:
+            type: object
+            required: [productId, quantity]
+            properties:
+              productId: { type: integer }
+              quantity: { type: integer }
+              notes: { type: string }
+
+    OrderUpdate:
+      type: object
+      properties:
+        status: { type: string }
+        paymentStatus: { type: string }
+        paymentMethod: { type: string }
+        notes: { type: string }
+
+    # ── Staff ──
+    StaffMember:
+      type: object
+      required: [id, name, role, phone, status, hireDate, createdAt]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        role: { type: string }
+        phone: { type: string }
+        email: { type: ["string", "null"] }
+        status: { type: string }
+        hireDate: { type: string }
+        notes: { type: ["string", "null"] }
+        createdAt: { type: string }
+
+    StaffInput:
+      type: object
+      required: [name, role, phone, hireDate]
+      properties:
+        name: { type: string, minLength: 1 }
+        role: { type: string }
+        phone: { type: string }
+        email: { type: string }
+        hireDate: { type: string }
+        notes: { type: string }
+
+    StaffUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        role: { type: string }
+        phone: { type: string }
+        email: { type: string }
+        status: { type: string }
+        notes: { type: string }
+
+    # ── Shift ──
+    Shift:
+      type: object
+      required: [id, staffId, staffName, date, startTime, endTime, role, createdAt]
+      properties:
+        id: { type: integer }
+        staffId: { type: integer }
+        staffName: { type: string }
+        date: { type: string }
+        startTime: { type: string }
+        endTime: { type: string }
+        role: { type: string }
+        notes: { type: ["string", "null"] }
+        createdAt: { type: string }
+
+    ShiftInput:
+      type: object
+      required: [staffId, date, startTime, endTime, role]
+      properties:
+        staffId: { type: integer }
+        date: { type: string }
+        startTime: { type: string }
+        endTime: { type: string }
+        role: { type: string }
+        notes: { type: string }
+
+    ShiftUpdate:
+      type: object
+      properties:
+        date: { type: string }
+        startTime: { type: string }
+        endTime: { type: string }
+        role: { type: string }
+        notes: { type: string }
+
+    # ── Task ──
+    Task:
+      type: object
+      required: [id, title, status, priority, createdAt]
+      properties:
+        id: { type: integer }
+        staffId: { type: ["integer", "null"] }
+        staffName: { type: ["string", "null"] }
+        title: { type: string }
+        description: { type: ["string", "null"] }
+        status: { type: string }
+        priority: { type: string }
+        dueDate: { type: ["string", "null"] }
+        createdAt: { type: string }
+
+    TaskInput:
+      type: object
+      required: [title, priority]
+      properties:
+        staffId: { type: integer }
+        title: { type: string, minLength: 1 }
+        description: { type: string }
+        priority: { type: string }
+        dueDate: { type: string }
+
+    TaskUpdate:
+      type: object
+      properties:
+        staffId: { type: integer }
+        title: { type: string }
+        description: { type: string }
+        status: { type: string }
+        priority: { type: string }
+        dueDate: { type: string }
+
+    # ── Dashboard ──
+    DashboardSummary:
+      type: object
+      required: [todaySales, todayOrders, todayCustomers, repeatCustomerRate, pendingOrders, activeReservations, weekSales]
+      properties:
+        todaySales: { type: number }
+        todayOrders: { type: integer }
+        todayCustomers: { type: integer }
+        repeatCustomerRate: { type: number }
+        pendingOrders: { type: integer }
+        activeReservations: { type: integer }
+        weekSales: { type: number }
+
+    TopProduct:
+      type: object
+      required: [productId, productName, category, totalSold, totalRevenue]
+      properties:
+        productId: { type: integer }
+        productName: { type: string }
+        category: { type: string }
+        totalSold: { type: integer }
+        totalRevenue: { type: number }
+
+    CustomerFlowPoint:
+      type: object
+      required: [hour, customers]
+      properties:
+        hour: { type: string }
+        customers: { type: integer }
+
+    ActivityItem:
+      type: object
+      required: [id, type, description, createdAt]
+      properties:
+        id: { type: string }
+        type: { type: string }
+        description: { type: string }
+        amount: { type: ["number", "null"] }
+        createdAt: { type: string }

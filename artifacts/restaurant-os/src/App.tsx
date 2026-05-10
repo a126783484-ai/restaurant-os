@@ -1,4 +1,4 @@
-import { Switch, Route, Router as WouterRouter } from "wouter";
+import { Switch, Route, Router as WouterRouter, Redirect, useLocation } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -24,23 +24,41 @@ const queryClient = new QueryClient({
   },
 });
 
+function isAuthenticated(): boolean {
+  return !!localStorage.getItem("auth_token");
+}
+
+function AuthGuard({ children }: { children: React.ReactNode }) {
+  const [location] = useLocation();
+  if (!isAuthenticated()) {
+    return <Redirect to="/login" />;
+  }
+  return <>{children}</>;
+}
+
 function Router() {
   return (
-    <Layout>
-      <Switch>
-        <Route path="/login" component={LoginPage} />
-        <Route path="/" component={Dashboard} />
-        <Route path="/customers/:id" component={CustomerProfile} />
-        <Route path="/customers" component={Customers} />
-        <Route path="/reservations" component={Reservations} />
-        <Route path="/orders/:id" component={OrderDetail} />
-        <Route path="/orders" component={Orders} />
-        <Route path="/staff" component={Staff} />
-        <Route path="/products" component={Products} />
-        <Route path="/floor-plan" component={FloorPlan} />
-        <Route component={NotFound} />
-      </Switch>
-    </Layout>
+    <Switch>
+      <Route path="/login" component={LoginPage} />
+      <Route>
+        <AuthGuard>
+          <Layout>
+            <Switch>
+              <Route path="/" component={Dashboard} />
+              <Route path="/customers/:id" component={CustomerProfile} />
+              <Route path="/customers" component={Customers} />
+              <Route path="/reservations" component={Reservations} />
+              <Route path="/orders/:id" component={OrderDetail} />
+              <Route path="/orders" component={Orders} />
+              <Route path="/staff" component={Staff} />
+              <Route path="/products" component={Products} />
+              <Route path="/floor-plan" component={FloorPlan} />
+              <Route component={NotFound} />
+            </Switch>
+          </Layout>
+        </AuthGuard>
+      </Route>
+    </Switch>
   );
 }
 

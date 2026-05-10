@@ -95,7 +95,7 @@ export default function Staff() {
 
   const staffForm = useForm<StaffForm>({ defaultValues: { role: "server" } });
   const shiftForm = useForm<ShiftForm>({ defaultValues: { date: today, startTime: "09:00", endTime: "17:00", role: "server" } });
-  const taskForm = useForm<TaskForm>({ defaultValues: { priority: "medium" } });
+  const taskForm = useForm<TaskForm>({ defaultValues: { priority: "medium", staffId: "__none__" } });
 
   const onAddStaff = (data: StaffForm) => {
     createStaff.mutate(
@@ -126,7 +126,7 @@ export default function Staff() {
 
   const onAddTask = (data: TaskForm) => {
     createTask.mutate(
-      { data: { staffId: data.staffId ? Number(data.staffId) : undefined, title: data.title, description: data.description || undefined, priority: data.priority, dueDate: data.dueDate || undefined } },
+      { data: { staffId: (data.staffId && data.staffId !== "__none__") ? Number(data.staffId) : undefined, title: data.title, description: data.description || undefined, priority: data.priority, dueDate: data.dueDate || undefined } },
       {
         onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListTasksQueryKey() }); setShowTaskForm(false); taskForm.reset(); toast({ title: "任務已建立" }); },
         onError: () => toast({ title: "建立任務失敗", variant: "destructive" }),
@@ -425,7 +425,7 @@ export default function Staff() {
                 <Select value={field.value} onValueChange={field.onChange}>
                   <SelectTrigger data-testid="select-task-staff"><SelectValue placeholder="未指派" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">未指派</SelectItem>
+                    <SelectItem value="__none__">未指派</SelectItem>
                     {(staff ?? []).filter(s => s.status === "active").map(s => (
                       <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
                     ))}

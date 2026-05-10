@@ -68,7 +68,7 @@ export default function Reservations() {
   const onSubmit = (data: ResForm) => {
     const dateTimeStr = `${data.reservedAt}:00`;
     createRes.mutate(
-      { data: { customerName: data.customerName, customerPhone: data.customerPhone, partySize: Number(data.partySize), reservedAt: dateTimeStr, tableId: data.tableId ? Number(data.tableId) : undefined, notes: data.notes || undefined } },
+      { data: { customerName: data.customerName, customerPhone: data.customerPhone, partySize: Number(data.partySize), reservedAt: dateTimeStr, tableId: (data.tableId && data.tableId !== "__none__") ? Number(data.tableId) : undefined, notes: data.notes || undefined } },
       {
         onSuccess: () => { invalidate(); setShowCreate(false); reset(); toast({ title: "訂位已建立" }); },
         onError: () => toast({ title: "建立訂位失敗", variant: "destructive" }),
@@ -211,7 +211,7 @@ export default function Reservations() {
                 <Select value={field.value} onValueChange={field.onChange}>
                   <SelectTrigger data-testid="select-res-table"><SelectValue placeholder="自動分配" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">自動分配</SelectItem>
+                    <SelectItem value="__none__">自動分配</SelectItem>
                     {(tables ?? []).filter(t => t.status === "available").map(t => (
                       <SelectItem key={t.id} value={String(t.id)}>{t.number} 號桌 — {t.section}（{t.capacity} 人）</SelectItem>
                     ))}

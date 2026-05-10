@@ -73,7 +73,7 @@ export default function Orders() {
   const { data: tables } = useListTables();
   const createOrder = useCreateOrder();
 
-  const { register, handleSubmit, control, reset } = useForm<OrderFormValues>({ defaultValues: { type: "dine-in", tableId: "", notes: "" } });
+  const { register, handleSubmit, control, reset } = useForm<OrderFormValues>({ defaultValues: { type: "dine-in", tableId: "__none__", notes: "" } });
 
   const addItem = (productId: number) => {
     const product = products?.find(p => p.id === productId);
@@ -97,7 +97,7 @@ export default function Orders() {
       {
         data: {
           type: data.type,
-          tableId: data.tableId ? Number(data.tableId) : undefined,
+          tableId: (data.tableId && data.tableId !== "__none__") ? Number(data.tableId) : undefined,
           notes: data.notes || undefined,
           items: orderItems.map(i => ({ productId: i.productId, quantity: i.quantity })),
         },
@@ -216,7 +216,7 @@ export default function Orders() {
                   <Select value={field.value} onValueChange={field.onChange}>
                     <SelectTrigger data-testid="select-order-table"><SelectValue placeholder="選擇桌次" /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">無桌次</SelectItem>
+                      <SelectItem value="__none__">無桌次</SelectItem>
                       {(tables ?? []).map(t => (
                         <SelectItem key={t.id} value={String(t.id)}>{t.number} 號桌（{t.section}）</SelectItem>
                       ))}

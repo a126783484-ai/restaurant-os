@@ -7,13 +7,19 @@
  */
 
 export * from "./activityItem";
+export * from "./aiInsight";
+export * from "./aiInsightsResult";
 export * from "./customer";
 export * from "./customerFlowPoint";
 export * from "./customerInput";
 export * from "./customerUpdate";
 export * from "./dashboardSummary";
 export * from "./healthStatus";
+export * from "./inventoryInput";
+export * from "./inventoryItem";
+export * from "./inventoryUpdate";
 export * from "./listCustomersParams";
+export * from "./listInventoryParams";
 export * from "./listOrdersParams";
 export * from "./listProductsParams";
 export * from "./listReservationsParams";

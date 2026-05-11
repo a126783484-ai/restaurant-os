@@ -344,6 +344,60 @@ export interface ActivityItem {
   createdAt: string;
 }
 
+export interface InventoryItem {
+  id: number;
+  name: string;
+  category: string;
+  unit: string;
+  quantity: number;
+  minQuantity: number;
+  cost: number;
+  /** @nullable */
+  supplier?: string | null;
+  /** @nullable */
+  notes?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InventoryInput {
+  /** @minLength 1 */
+  name: string;
+  category?: string;
+  unit?: string;
+  quantity?: number;
+  minQuantity?: number;
+  cost?: number;
+  supplier?: string;
+  notes?: string;
+}
+
+export interface InventoryUpdate {
+  name?: string;
+  category?: string;
+  unit?: string;
+  quantity?: number;
+  minQuantity?: number;
+  cost?: number;
+  supplier?: string;
+  notes?: string;
+}
+
+export interface AiInsight {
+  type: string;
+  priority: string;
+  title: string;
+  content: string;
+  /** @nullable */
+  action?: string | null;
+}
+
+export interface AiInsightsResult {
+  generatedAt: string;
+  summary: string;
+  insights: AiInsight[];
+}
+
 export type ListCustomersParams = {
   search?: string;
   tag?: string;
@@ -376,4 +430,9 @@ export type ListShiftsParams = {
 export type ListTasksParams = {
   staffId?: number;
   status?: string;
+};
+
+export type ListInventoryParams = {
+  category?: string;
+  lowStock?: string;
 };

@@ -11,6 +11,8 @@ import {
   X,
   LayoutGrid,
   LogOut,
+  Package,
+  Brain,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -18,12 +20,15 @@ import { useLogout } from "@/hooks/use-auth";
 
 const navItems = [
   { href: "/", label: "儀表板", icon: LayoutDashboard },
+  { href: "/kitchen", label: "廚房顯示", icon: ChefHat },
   { href: "/floor-plan", label: "樓層平面圖", icon: LayoutGrid },
   { href: "/customers", label: "顧客管理", icon: Users },
   { href: "/reservations", label: "訂位管理", icon: CalendarDays },
   { href: "/orders", label: "訂單管理", icon: ShoppingBag },
   { href: "/staff", label: "員工管理", icon: UserCog },
   { href: "/products", label: "菜單管理", icon: UtensilsCrossed },
+  { href: "/inventory", label: "庫存管理", icon: Package },
+  { href: "/analytics", label: "AI 分析", icon: Brain },
 ];
 
 function NavLink({ href, label, icon: Icon, onClick }: { href: string; label: string; icon: React.ElementType; onClick?: () => void }) {

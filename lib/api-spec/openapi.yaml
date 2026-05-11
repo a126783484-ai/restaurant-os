@@ -28,6 +28,10 @@ tags:
     description: Task tracking
   - name: dashboard
     description: Dashboard analytics
+  - name: inventory
+    description: Inventory management
+  - name: ai
+    description: AI-powered insights
 
 paths:
   /healthz:
@@ -720,6 +724,90 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/ActivityItem" }
 
+  # ─── INVENTORY ────────────────────────────────────────────────
+  /inventory:
+    get:
+      operationId: listInventory
+      tags: [inventory]
+      summary: List inventory items
+      parameters:
+        - name: category
+          in: query
+          schema: { type: string }
+        - name: lowStock
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Inventory items
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/InventoryItem" }
+    post:
+      operationId: createInventory
+      tags: [inventory]
+      summary: Create inventory item
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InventoryInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InventoryItem" }
+
+  /inventory/{id}:
+    patch:
+      operationId: updateInventory
+      tags: [inventory]
+      summary: Update inventory item
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InventoryUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InventoryItem" }
+    delete:
+      operationId: deleteInventory
+      tags: [inventory]
+      summary: Delete inventory item
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "204":
+          description: Deleted
+
+  # ─── AI ────────────────────────────────────────────────────────
+  /ai/insights:
+    post:
+      operationId: getAiInsights
+      tags: [ai]
+      summary: Get AI-powered operational insights
+      responses:
+        "200":
+          description: AI insights
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AiInsightsResult" }
+
 components:
   schemas:
     HealthStatus:
@@ -1098,3 +1186,66 @@ components:
         description: { type: string }
         amount: { type: ["number", "null"] }
         createdAt: { type: string }
+
+    # ── Inventory ──
+    InventoryItem:
+      type: object
+      required: [id, name, category, unit, quantity, minQuantity, cost, createdAt, updatedAt]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        category: { type: string }
+        unit: { type: string }
+        quantity: { type: number }
+        minQuantity: { type: number }
+        cost: { type: number }
+        supplier: { type: ["string", "null"] }
+        notes: { type: ["string", "null"] }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+
+    InventoryInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1 }
+        category: { type: string }
+        unit: { type: string }
+        quantity: { type: number }
+        minQuantity: { type: number }
+        cost: { type: number }
+        supplier: { type: string }
+        notes: { type: string }
+
+    InventoryUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        category: { type: string }
+        unit: { type: string }
+        quantity: { type: number }
+        minQuantity: { type: number }
+        cost: { type: number }
+        supplier: { type: string }
+        notes: { type: string }
+
+    # ── AI ──
+    AiInsight:
+      type: object
+      required: [type, priority, title, content]
+      properties:
+        type: { type: string }
+        priority: { type: string }
+        title: { type: string }
+        content: { type: string }
+        action: { type: ["string", "null"] }
+
+    AiInsightsResult:
+      type: object
+      required: [generatedAt, summary, insights]
+      properties:
+        generatedAt: { type: string }
+        summary: { type: string }
+        insights:
+          type: array
+          items: { $ref: "#/components/schemas/AiInsight" }

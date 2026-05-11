@@ -13,6 +13,9 @@ import OrderDetail from "@/pages/OrderDetail";
 import Staff from "@/pages/Staff";
 import Products from "@/pages/Products";
 import FloorPlan from "@/pages/FloorPlan";
+import KitchenDisplay from "@/pages/KitchenDisplay";
+import Inventory from "@/pages/Inventory";
+import Analytics from "@/pages/Analytics";
 import NotFound from "@/pages/not-found";
 import { isAuthenticated, clearToken } from "@/hooks/use-auth";
 import { ApiError } from "@workspace/api-client-react";
@@ -53,6 +56,7 @@ function Router() {
           <Layout>
             <Switch>
               <Route path="/" component={Dashboard} />
+              <Route path="/kitchen" component={KitchenDisplay} />
               <Route path="/customers/:id" component={CustomerProfile} />
               <Route path="/customers" component={Customers} />
               <Route path="/reservations" component={Reservations} />
@@ -61,6 +65,8 @@ function Router() {
               <Route path="/staff" component={Staff} />
               <Route path="/products" component={Products} />
               <Route path="/floor-plan" component={FloorPlan} />
+              <Route path="/inventory" component={Inventory} />
+              <Route path="/analytics" component={Analytics} />
               <Route component={NotFound} />
             </Switch>
           </Layout>

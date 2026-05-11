@@ -696,3 +696,97 @@ export const GetRecentActivityResponseItem = zod.object({
 export const GetRecentActivityResponse = zod.array(
   GetRecentActivityResponseItem,
 );
+
+/**
+ * @summary List inventory items
+ */
+export const ListInventoryQueryParams = zod.object({
+  category: zod.coerce.string().optional(),
+  lowStock: zod.coerce.string().optional(),
+});
+
+export const ListInventoryResponseItem = zod.object({
+  id: zod.number(),
+  name: zod.string(),
+  category: zod.string(),
+  unit: zod.string(),
+  quantity: zod.number(),
+  minQuantity: zod.number(),
+  cost: zod.number(),
+  supplier: zod.string().nullish(),
+  notes: zod.string().nullish(),
+  createdAt: zod.string(),
+  updatedAt: zod.string(),
+});
+export const ListInventoryResponse = zod.array(ListInventoryResponseItem);
+
+/**
+ * @summary Create inventory item
+ */
+
+export const CreateInventoryBody = zod.object({
+  name: zod.string().min(1),
+  category: zod.string().optional(),
+  unit: zod.string().optional(),
+  quantity: zod.number().optional(),
+  minQuantity: zod.number().optional(),
+  cost: zod.number().optional(),
+  supplier: zod.string().optional(),
+  notes: zod.string().optional(),
+});
+
+/**
+ * @summary Update inventory item
+ */
+export const UpdateInventoryParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateInventoryBody = zod.object({
+  name: zod.string().optional(),
+  category: zod.string().optional(),
+  unit: zod.string().optional(),
+  quantity: zod.number().optional(),
+  minQuantity: zod.number().optional(),
+  cost: zod.number().optional(),
+  supplier: zod.string().optional(),
+  notes: zod.string().optional(),
+});
+
+export const UpdateInventoryResponse = zod.object({
+  id: zod.number(),
+  name: zod.string(),
+  category: zod.string(),
+  unit: zod.string(),
+  quantity: zod.number(),
+  minQuantity: zod.number(),
+  cost: zod.number(),
+  supplier: zod.string().nullish(),
+  notes: zod.string().nullish(),
+  createdAt: zod.string(),
+  updatedAt: zod.string(),
+});
+
+/**
+ * @summary Delete inventory item
+ */
+export const DeleteInventoryParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+/**
+ * @summary Get AI-powered operational insights
+ */
+export const GetAiInsightsResponse = zod.object({
+  generatedAt: zod.string(),
+  summary: zod.string(),
+  insights: zod.array(
+    zod.object({
+      type: zod.string(),
+      priority: zod.string(),
+      title: zod.string(),
+      content: zod.string(),
+      action: zod.string().nullish(),
+    }),
+  ),
+});

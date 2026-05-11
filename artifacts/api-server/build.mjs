@@ -10,6 +10,19 @@ globalThis.require = createRequire(import.meta.url);
 
 const artifactDir = path.dirname(fileURLToPath(import.meta.url));
 
+const workspaceAliasPlugin = {
+  name: 'workspace-alias',
+  setup(build) {
+    build.onResolve({ filter: /^@workspace\/db$/ }, () => ({
+      path: path.resolve(artifactDir, '../../lib/db/src/index.ts')
+    }));
+
+    build.onResolve({ filter: /^@workspace\/api-zod$/ }, () => ({
+      path: path.resolve(artifactDir, '../../lib/api-zod/src/index.ts')
+    }));
+  }
+};
+
 async function buildAll() {
   const distDir = path.resolve(artifactDir, "dist");
   await rm(distDir, { recursive: true, force: true });
@@ -22,11 +35,6 @@ async function buildAll() {
     outdir: distDir,
     outExtension: { ".js": ".mjs" },
     logLevel: "info",
-    // Some packages may not be bundleable, so we externalize them, we can add more here as needed.
-    // Some of the packages below may not be imported or installed, but we're adding them in case they are in the future.
-    // Examples of unbundleable packages:
-    // - uses native modules and loads them dynamically (e.g. sharp)
-    // - use path traversal to read files (e.g. @google-cloud/secret-manager loads sibling .proto files)
     external: [
       "*.node",
       "sharp",
@@ -99,14 +107,13 @@ async function buildAll() {
       "playwright",
       "puppeteer",
       "puppeteer-core",
-      "electron",
+      "electron"
     ],
     sourcemap: "linked",
     plugins: [
-      // pino relies on workers to handle logging, instead of externalizing it we use a plugin to handle it
+      workspaceAliasPlugin,
       esbuildPluginPino({ transports: ["pino-pretty"] })
     ],
-    // Make sure packages that are cjs only (e.g. express) but are bundled continue to work in our esm output file
     banner: {
       js: `import { createRequire as __bannerCrReq } from 'node:module';
 import __bannerPath from 'node:path';

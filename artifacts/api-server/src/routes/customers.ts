@@ -50,7 +50,16 @@ router.post("/customers", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const [customer] = await db.insert(customersTable).values(parsed.data).returning();
+
+  const customerData = {
+    name: parsed.data.name!,
+    phone: parsed.data.phone!,
+    email: parsed.data.email,
+    tags: parsed.data.tags,
+    notes: parsed.data.notes,
+  };
+
+  const [customer] = await db.insert(customersTable).values(customerData).returning();
   res.status(201).json(customer);
 });
 

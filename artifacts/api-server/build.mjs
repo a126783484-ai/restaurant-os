@@ -5,22 +5,25 @@ import { build as esbuild } from "esbuild";
 import esbuildPluginPino from "esbuild-plugin-pino";
 import { rm } from "node:fs/promises";
 
-// Plugins (e.g. 'esbuild-plugin-pino') may use `require` to resolve dependencies
 globalThis.require = createRequire(import.meta.url);
 
 const artifactDir = path.dirname(fileURLToPath(import.meta.url));
 
 const workspaceAliasPlugin = {
-  name: 'workspace-alias',
+  name: "workspace-alias",
   setup(build) {
     build.onResolve({ filter: /^@workspace\/db$/ }, () => ({
-      path: path.resolve(artifactDir, '../../lib/db/src/index.ts')
+      path: path.resolve(artifactDir, "../../lib/db/src/index.ts"),
     }));
 
     build.onResolve({ filter: /^@workspace\/api-zod$/ }, () => ({
-      path: path.resolve(artifactDir, '../../lib/api-zod/src/index.ts')
+      path: path.resolve(artifactDir, "../../lib/api-zod/src/index.ts"),
     }));
-  }
+
+    build.onResolve({ filter: /^@workspace\/integrations-openai-ai-server$/ }, () => ({
+      path: path.resolve(artifactDir, "../../lib/integrations-openai-ai-server/src/index.ts"),
+    }));
+  },
 };
 
 async function buildAll() {
@@ -36,6 +39,9 @@ async function buildAll() {
     outExtension: { ".js": ".mjs" },
     logLevel: "info",
     external: [
+      "express",
+      "cookie-parser",
+      "cors",
       "*.node",
       "sharp",
       "better-sqlite3",
@@ -112,7 +118,7 @@ async function buildAll() {
     sourcemap: "linked",
     plugins: [
       workspaceAliasPlugin,
-      esbuildPluginPino({ transports: ["pino-pretty"] })
+      esbuildPluginPino({ transports: ["pino-pretty"] }),
     ],
     banner: {
       js: `import { createRequire as __bannerCrReq } from 'node:module';

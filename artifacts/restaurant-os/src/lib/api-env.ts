@@ -1,5 +1,5 @@
 const DEFAULT_PRODUCTION_API_BASE_URL =
-  "https://restaurant-os-api-server-jgrr2thvx-a126783484-2182s-projects.vercel.app";
+  "https://restaurant-os-api-server-a126783484-2182s-projects.vercel.app";
 
 function normalizeBaseUrl(value: string | undefined): string {
   const trimmed = value?.trim();

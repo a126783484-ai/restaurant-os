@@ -1,4 +1,5 @@
 import { Router, type IRouter, type RequestHandler } from "express";
+import { getDatabaseRuntimeStatus, isDatabaseConfigured } from "@workspace/db";
 
 const router: IRouter = Router();
 
@@ -167,6 +168,34 @@ router.get("/routes/status", (_req, res) => {
     mode: "lazy-route-recovery",
     routes: getRouteStatus(),
     timestamp: new Date().toISOString(),
+  });
+});
+
+router.get("/system/status", (_req, res) => {
+  const database = getDatabaseRuntimeStatus();
+  const routeStatus = getRouteStatus();
+  const failedRoutes = routeStatus.filter((route) => route.error);
+
+  res.status(200).json({
+    ok: failedRoutes.length === 0,
+    service: "restaurant-os-api-server",
+    runtime: {
+      nodeEnv: process.env.NODE_ENV ?? "unknown",
+      uptimeSeconds: Math.round(process.uptime()),
+      timestamp: new Date().toISOString(),
+    },
+    database: {
+      ...database,
+      ready: isDatabaseConfigured() && !database.initError,
+    },
+    routes: {
+      mode: "lazy-route-recovery",
+      total: routeStatus.length,
+      loaded: routeStatus.filter((route) => route.loaded).length,
+      loading: routeStatus.filter((route) => route.loading).length,
+      failed: failedRoutes.length,
+      items: routeStatus,
+    },
   });
 });
 

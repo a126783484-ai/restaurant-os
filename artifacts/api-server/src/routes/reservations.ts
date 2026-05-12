@@ -44,10 +44,23 @@ router.post("/reservations", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const data = {
-    ...parsed.data,
-    reservedAt: new Date(parsed.data.reservedAt),
+
+  const { customerName, customerPhone, partySize, reservedAt } = parsed.data;
+  if (!customerName || !customerPhone || typeof partySize !== "number" || !reservedAt) {
+    res.status(400).json({ error: "customerName, customerPhone, partySize, and reservedAt are required" });
+    return;
+  }
+
+  const data: typeof reservationsTable.$inferInsert = {
+    customerId: parsed.data.customerId,
+    customerName,
+    customerPhone,
+    tableId: parsed.data.tableId,
+    partySize,
+    reservedAt: new Date(reservedAt),
+    notes: parsed.data.notes,
   };
+
   const [reservation] = await db.insert(reservationsTable).values(data).returning();
   res.status(201).json(reservation);
 });

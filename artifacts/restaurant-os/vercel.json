@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "buildCommand": "cd ../.. && pnpm --filter @workspace/restaurant-os build",
+  "outputDirectory": "dist/public",
+  "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
+  "framework": null,
+  "env": {
+    "VITE_API_BASE_URL": "https://restaurant-os-api-server-jgrr2thvx-a126783484-2182s-projects.vercel.app"
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}

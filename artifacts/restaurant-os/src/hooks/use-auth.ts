@@ -1,4 +1,5 @@
 import { useLocation } from "wouter";
+import { getApiUrl } from "@/lib/api-env";
 
 const TOKEN_KEY = "auth_token";
 
@@ -22,11 +23,12 @@ export function useLogout() {
   const [, navigate] = useLocation();
 
   return async function logout() {
+    const token = getToken();
     clearToken();
     try {
-      await fetch(`${import.meta.env.BASE_URL}api/auth/logout`, {
+      await fetch(getApiUrl("/api/auth/logout"), {
         method: "POST",
-        credentials: "include",
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
     } catch {
       // ignore network errors on logout

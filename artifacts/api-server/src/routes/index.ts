@@ -1,30 +1,198 @@
-import { Router, type IRouter } from "express";
-import healthRouter from "./health";
-import authRouter from "./auth";
-import customersRouter from "./customers";
-import tablesRouter from "./tables";
-import reservationsRouter from "./reservations";
-import productsRouter from "./products";
-import ordersRouter from "./orders";
-import staffRouter from "./staff";
-import dashboardRouter from "./dashboard";
-import paymentsRouter from "./payments";
-import inventoryRouter from "./inventory";
-import aiRouter from "./ai";
+import { Router, type IRouter, type RequestHandler } from "express";
 
 const router: IRouter = Router();
 
-router.use(healthRouter);
-router.use(authRouter);
-router.use(customersRouter);
-router.use(tablesRouter);
-router.use(reservationsRouter);
-router.use(productsRouter);
-router.use(ordersRouter);
-router.use(staffRouter);
-router.use(dashboardRouter);
-router.use(paymentsRouter);
-router.use(inventoryRouter);
-router.use(aiRouter);
+type RouteModuleKey =
+  | "health"
+  | "auth"
+  | "customers"
+  | "tables"
+  | "reservations"
+  | "products"
+  | "orders"
+  | "staff"
+  | "dashboard"
+  | "payments"
+  | "inventory"
+  | "ai";
+
+type RouteModuleStatus = {
+  key: RouteModuleKey;
+  paths: string[];
+  loaded: boolean;
+  loading: boolean;
+  error: string | null;
+  loadedAt: string | null;
+};
+
+type RouteModuleRecord = {
+  key: RouteModuleKey;
+  paths: string[];
+  load: () => Promise<{ default: IRouter }>;
+  router?: IRouter;
+  promise?: Promise<IRouter>;
+  error: string | null;
+  loadedAt: string | null;
+};
+
+const routeModules: RouteModuleRecord[] = [
+  {
+    key: "health",
+    paths: ["/healthz"],
+    load: () => import("./health"),
+    error: null,
+    loadedAt: null,
+  },
+  {
+    key: "auth",
+    paths: ["/auth"],
+    load: () => import("./auth"),
+    error: null,
+    loadedAt: null,
+  },
+  {
+    key: "customers",
+    paths: ["/customers"],
+    load: () => import("./customers"),
+    error: null,
+    loadedAt: null,
+  },
+  {
+    key: "tables",
+    paths: ["/tables"],
+    load: () => import("./tables"),
+    error: null,
+    loadedAt: null,
+  },
+  {
+    key: "reservations",
+    paths: ["/reservations"],
+    load: () => import("./reservations"),
+    error: null,
+    loadedAt: null,
+  },
+  {
+    key: "products",
+    paths: ["/products"],
+    load: () => import("./products"),
+    error: null,
+    loadedAt: null,
+  },
+  {
+    key: "orders",
+    paths: ["/orders"],
+    load: () => import("./orders"),
+    error: null,
+    loadedAt: null,
+  },
+  {
+    key: "staff",
+    paths: ["/staff", "/shifts", "/tasks"],
+    load: () => import("./staff"),
+    error: null,
+    loadedAt: null,
+  },
+  {
+    key: "dashboard",
+    paths: ["/dashboard"],
+    load: () => import("./dashboard"),
+    error: null,
+    loadedAt: null,
+  },
+  {
+    key: "payments",
+    paths: ["/payments"],
+    load: () => import("./payments"),
+    error: null,
+    loadedAt: null,
+  },
+  {
+    key: "inventory",
+    paths: ["/inventory"],
+    load: () => import("./inventory"),
+    error: null,
+    loadedAt: null,
+  },
+  {
+    key: "ai",
+    paths: ["/ai"],
+    load: () => import("./ai"),
+    error: null,
+    loadedAt: null,
+  },
+];
+
+function getRouteStatus(): RouteModuleStatus[] {
+  return routeModules.map((entry) => ({
+    key: entry.key,
+    paths: entry.paths,
+    loaded: Boolean(entry.router),
+    loading: Boolean(entry.promise && !entry.router),
+    error: entry.error,
+    loadedAt: entry.loadedAt,
+  }));
+}
+
+function findRouteModule(path: string): RouteModuleRecord | undefined {
+  return routeModules.find((entry) =>
+    entry.paths.some((prefix) => path === prefix || path.startsWith(`${prefix}/`)),
+  );
+}
+
+async function loadRouteModule(entry: RouteModuleRecord): Promise<IRouter> {
+  if (entry.router) return entry.router;
+
+  entry.promise ??= entry
+    .load()
+    .then((module) => {
+      entry.router = module.default;
+      entry.error = null;
+      entry.loadedAt = new Date().toISOString();
+      return entry.router;
+    })
+    .catch((err) => {
+      entry.promise = undefined;
+      entry.router = undefined;
+      entry.loadedAt = null;
+      entry.error = err instanceof Error ? err.message : String(err);
+      throw err;
+    });
+
+  return entry.promise;
+}
+
+router.get("/routes/status", (_req, res) => {
+  res.status(200).json({
+    ok: true,
+    mode: "lazy-route-recovery",
+    routes: getRouteStatus(),
+    timestamp: new Date().toISOString(),
+  });
+});
+
+const lazyRouteRecoveryMiddleware: RequestHandler = async (req, res, next) => {
+  const entry = findRouteModule(req.path);
+
+  if (!entry) {
+    next();
+    return;
+  }
+
+  try {
+    const moduleRouter = await loadRouteModule(entry);
+    moduleRouter(req, res, next);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(503).json({
+      ok: false,
+      route: entry.key,
+      error: "Route module failed to load",
+      message,
+      timestamp: new Date().toISOString(),
+    });
+  }
+};
+
+router.use(lazyRouteRecoveryMiddleware);
 
 export default router;

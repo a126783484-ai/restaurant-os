@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
 import { setToken } from "@/hooks/use-auth";
+import { getApiUrl } from "@/lib/api-env";
 import { ChefHat } from "lucide-react";
 
 export default function LoginPage() {
@@ -15,10 +16,9 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      const res = await fetch(`${import.meta.env.BASE_URL}api/auth/login`, {
+      const res = await fetch(getApiUrl("/api/auth/login"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ email, password }),
       });
       if (!res.ok) {

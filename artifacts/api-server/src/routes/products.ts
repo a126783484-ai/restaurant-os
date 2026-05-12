@@ -32,7 +32,22 @@ router.post("/products", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const [product] = await db.insert(productsTable).values(parsed.data).returning();
+
+  const { name, price, category } = parsed.data;
+  if (!name || typeof price !== "number" || !category) {
+    res.status(400).json({ error: "name, price, and category are required" });
+    return;
+  }
+
+  const data: typeof productsTable.$inferInsert = {
+    name,
+    price,
+    category,
+    description: parsed.data.description,
+    available: parsed.data.available,
+  };
+
+  const [product] = await db.insert(productsTable).values(data).returning();
   res.status(201).json(product);
 });
 

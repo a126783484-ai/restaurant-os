@@ -1,8 +1,24 @@
-import express from "express";
+import app from "./app";
+import { logger } from "./lib/logger";
 
-const app = express();
+const isVercel = Boolean(process.env["VERCEL"]);
 
-app.get("/", (_req, res) => res.status(200).json({ ok: true, runtime: "minimal-express" }));
-app.get("/health", (_req, res) => res.status(200).json({ ok: true, runtime: "minimal-express" }));
+if (!isVercel) {
+  const rawPort = process.env["PORT"] ?? "3000";
+  const port = Number(rawPort);
+
+  if (Number.isNaN(port) || port <= 0) {
+    throw new Error(`Invalid PORT value: "${rawPort}"`);
+  }
+
+  app.listen(port, (err) => {
+    if (err) {
+      logger.error({ err }, "Error listening on port");
+      process.exit(1);
+    }
+
+    logger.info({ port }, "Server listening");
+  });
+}
 
 export default app;

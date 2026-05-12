@@ -1,5 +1,6 @@
 import { Router, type IRouter, type RequestHandler } from "express";
 import { getDatabaseRuntimeStatus, isDatabaseConfigured } from "@workspace/db";
+import { getOpenAIIntegrationStatus } from "@workspace/integrations-openai-ai-server";
 
 const router: IRouter = Router();
 
@@ -173,11 +174,13 @@ router.get("/routes/status", (_req, res) => {
 
 router.get("/system/status", (_req, res) => {
   const database = getDatabaseRuntimeStatus();
+  const ai = getOpenAIIntegrationStatus();
   const routeStatus = getRouteStatus();
   const failedRoutes = routeStatus.filter((route) => route.error);
+  const coreReady = isDatabaseConfigured() && !database.initError;
 
   res.status(200).json({
-    ok: failedRoutes.length === 0,
+    ok: coreReady && failedRoutes.length === 0,
     service: "restaurant-os-api-server",
     runtime: {
       nodeEnv: process.env.NODE_ENV ?? "unknown",
@@ -186,7 +189,11 @@ router.get("/system/status", (_req, res) => {
     },
     database: {
       ...database,
-      ready: isDatabaseConfigured() && !database.initError,
+      ready: coreReady,
+    },
+    ai: {
+      ...ai,
+      ready: ai.configured && !ai.initError,
     },
     routes: {
       mode: "lazy-route-recovery",

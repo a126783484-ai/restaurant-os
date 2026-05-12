@@ -22,7 +22,6 @@ import { and } from "drizzle-orm";
 
 const router: IRouter = Router();
 
-// ── Staff ──
 router.get("/staff", async (req, res): Promise<void> => {
   const parsed = ListStaffQueryParams.safeParse(req.query);
   if (!parsed.success) {
@@ -42,7 +41,20 @@ router.post("/staff", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const [member] = await db.insert(staffTable).values(parsed.data).returning();
+  const { name, role, phone, hireDate } = parsed.data;
+  if (!name || !role || !phone || !hireDate) {
+    res.status(400).json({ error: "name, role, phone, and hireDate are required" });
+    return;
+  }
+  const data: typeof staffTable.$inferInsert = {
+    name,
+    role,
+    phone,
+    hireDate,
+    email: parsed.data.email,
+    notes: parsed.data.notes,
+  };
+  const [member] = await db.insert(staffTable).values(data).returning();
   res.status(201).json(member);
 });
 
@@ -79,7 +91,6 @@ router.delete("/staff/:id", async (req, res): Promise<void> => {
   res.sendStatus(204);
 });
 
-// ── Shifts ──
 router.get("/shifts", async (req, res): Promise<void> => {
   const parsed = ListShiftsQueryParams.safeParse(req.query);
   if (!parsed.success) {
@@ -90,12 +101,9 @@ router.get("/shifts", async (req, res): Promise<void> => {
   const conditions = [];
   if (date) conditions.push(eq(shiftsTable.date, date));
   if (staffId) conditions.push(eq(shiftsTable.staffId, staffId));
-
   const rawShifts = conditions.length > 0
     ? await db.select().from(shiftsTable).where(and(...conditions)).orderBy(shiftsTable.date, shiftsTable.startTime)
     : await db.select().from(shiftsTable).orderBy(shiftsTable.date, shiftsTable.startTime);
-
-  // Join with staff names
   const staff = await db.select().from(staffTable);
   const staffMap = new Map(staff.map(s => [s.id, s.name]));
   const shifts = rawShifts.map(s => ({ ...s, staffName: staffMap.get(s.staffId) ?? "Unknown" }));
@@ -108,7 +116,20 @@ router.post("/shifts", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const [shift] = await db.insert(shiftsTable).values(parsed.data).returning();
+  const { staffId, date, startTime, endTime, role } = parsed.data;
+  if (typeof staffId !== "number" || !date || !startTime || !endTime || !role) {
+    res.status(400).json({ error: "staffId, date, startTime, endTime, and role are required" });
+    return;
+  }
+  const data: typeof shiftsTable.$inferInsert = {
+    staffId,
+    date,
+    startTime,
+    endTime,
+    role,
+    notes: parsed.data.notes,
+  };
+  const [shift] = await db.insert(shiftsTable).values(data).returning();
   const [staffMember] = await db.select().from(staffTable).where(eq(staffTable.id, shift.staffId));
   res.status(201).json({ ...shift, staffName: staffMember?.name ?? "Unknown" });
 });
@@ -147,7 +168,6 @@ router.delete("/shifts/:id", async (req, res): Promise<void> => {
   res.sendStatus(204);
 });
 
-// ── Tasks ──
 router.get("/tasks", async (req, res): Promise<void> => {
   const parsed = ListTasksQueryParams.safeParse(req.query);
   if (!parsed.success) {
@@ -158,11 +178,9 @@ router.get("/tasks", async (req, res): Promise<void> => {
   const conditions = [];
   if (staffId) conditions.push(eq(tasksTable.staffId, staffId));
   if (status) conditions.push(eq(tasksTable.status, status));
-
   const rawTasks = conditions.length > 0
     ? await db.select().from(tasksTable).where(and(...conditions)).orderBy(tasksTable.createdAt)
     : await db.select().from(tasksTable).orderBy(tasksTable.createdAt);
-
   const staff = await db.select().from(staffTable);
   const staffMap = new Map(staff.map(s => [s.id, s.name]));
   const tasks = rawTasks.map(t => ({ ...t, staffName: t.staffId ? (staffMap.get(t.staffId) ?? null) : null }));
@@ -175,7 +193,19 @@ router.post("/tasks", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const [task] = await db.insert(tasksTable).values(parsed.data).returning();
+  const { title, priority } = parsed.data;
+  if (!title || !priority) {
+    res.status(400).json({ error: "title and priority are required" });
+    return;
+  }
+  const data: typeof tasksTable.$inferInsert = {
+    staffId: parsed.data.staffId,
+    title,
+    description: parsed.data.description,
+    priority,
+    dueDate: parsed.data.dueDate,
+  };
+  const [task] = await db.insert(tasksTable).values(data).returning();
   let staffName = null;
   if (task.staffId) {
     const [staffMember] = await db.select().from(staffTable).where(eq(staffTable.id, task.staffId));

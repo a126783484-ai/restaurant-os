@@ -1,24 +1,11 @@
-import app from "./app";
-import { logger } from "./lib/logger";
+import type { IncomingMessage, ServerResponse } from "node:http";
 
-const isVercel = Boolean(process.env["VERCEL"]);
-
-if (!isVercel) {
-  const rawPort = process.env["PORT"] ?? "3000";
-  const port = Number(rawPort);
-
-  if (Number.isNaN(port) || port <= 0) {
-    throw new Error(`Invalid PORT value: "${rawPort}"`);
-  }
-
-  app.listen(port, (err) => {
-    if (err) {
-      logger.error({ err }, "Error listening on port");
-      process.exit(1);
-    }
-
-    logger.info({ port }, "Server listening");
-  });
+export default function handler(_req: IncomingMessage, res: ServerResponse) {
+  res.statusCode = 200;
+  res.setHeader("content-type", "application/json; charset=utf-8");
+  res.end(JSON.stringify({
+    ok: true,
+    runtime: "minimal",
+    timestamp: new Date().toISOString(),
+  }));
 }
-
-export default app;

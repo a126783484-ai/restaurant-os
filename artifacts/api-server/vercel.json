@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "buildCommand": "pnpm run build",
+  "outputDirectory": "dist",
+  "functions": {
+    "dist/index.mjs": {
+      "runtime": "nodejs24.x"
+    }
+  },
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/dist/index.mjs"
+    }
+  ]
+}

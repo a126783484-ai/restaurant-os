@@ -1,11 +1,8 @@
-import type { IncomingMessage, ServerResponse } from "node:http";
+import express from "express";
 
-export default function handler(_req: IncomingMessage, res: ServerResponse) {
-  res.statusCode = 200;
-  res.setHeader("content-type", "application/json; charset=utf-8");
-  res.end(JSON.stringify({
-    ok: true,
-    runtime: "minimal",
-    timestamp: new Date().toISOString(),
-  }));
-}
+const app = express();
+
+app.get("/", (_req, res) => res.status(200).json({ ok: true, runtime: "minimal-express" }));
+app.get("/health", (_req, res) => res.status(200).json({ ok: true, runtime: "minimal-express" }));
+
+export default app;

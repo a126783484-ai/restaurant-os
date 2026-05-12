@@ -1,21 +1,19 @@
 import { Router, type IRouter } from "express";
-import { db, ordersTable, orderItemsTable, customersTable, productsTable } from "@workspace/db";
+import { db, ordersTable, orderItemsTable, customersTable } from "@workspace/db";
 import { gte, sql, desc } from "drizzle-orm";
 import { openai } from "@workspace/integrations-openai-ai-server";
 
 const router: IRouter = Router();
 
 router.post("/ai/insights", async (req, res): Promise<void> => {
+  const logger = (req as any).log ?? console;
+
   try {
     const now = new Date();
     const thirtyDaysAgo = new Date(now);
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const [
-      recentOrders,
-      topProducts,
-      customerStats,
-    ] = await Promise.all([
+    const [recentOrders, topProducts, customerStats] = await Promise.all([
       db.select({
         id: ordersTable.id,
         status: ordersTable.status,
@@ -76,23 +74,7 @@ ${topProducts.slice(0, 5).map((p, i) => `${i + 1}. ${p.productName}：賣出 ${p
       messages: [
         {
           role: "system",
-          content: `你是一位專業的餐飲業AI顧問，擅長分析餐廳營運數據並提供可執行的建議。請用繁體中文回應，並以 JSON 格式輸出分析結果。
-
-回應格式：
-{
-  "summary": "整體營運狀況的一句話總結",
-  "insights": [
-    {
-      "type": "revenue|customer|menu|operations|staff",
-      "priority": "high|medium|low",
-      "title": "洞察標題",
-      "content": "詳細分析說明（2-3句）",
-      "action": "建議行動（1句）"
-    }
-  ]
-}
-
-請提供 4-6 條具體、可執行的洞察。`,
+          content: `你是一位專業的餐飲業AI顧問，擅長分析餐廳營運數據並提供可執行的建議。請用繁體中文回應，並以 JSON 格式輸出分析結果。`,
         },
         {
           role: "user",
@@ -101,20 +83,21 @@ ${topProducts.slice(0, 5).map((p, i) => `${i + 1}. ${p.productName}：賣出 ${p
       ],
     });
 
-    req.log.info({
+    logger.info?.({
       choicesCount: completion.choices?.length,
       finishReason: completion.choices?.[0]?.finish_reason,
       hasContent: !!completion.choices?.[0]?.message?.content,
     }, "AI response received");
-    const raw = completion.choices[0]?.message?.content ?? "";
 
-    // Extract JSON object from the response (handles markdown code fences and leading text)
+    const raw = completion.choices[0]?.message?.content ?? "";
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
+
     if (!jsonMatch) {
-      req.log.error({ raw }, "No JSON object found in AI response");
+      logger.error?.({ raw }, "No JSON object found in AI response");
       res.status(500).json({ error: "AI returned invalid format" });
       return;
     }
+
     const parsed = JSON.parse(jsonMatch[0]);
 
     res.json({
@@ -123,7 +106,7 @@ ${topProducts.slice(0, 5).map((p, i) => `${i + 1}. ${p.productName}：賣出 ${p
       insights: parsed.insights ?? [],
     });
   } catch (err) {
-    req.log.error({ err }, "AI insights failed");
+    logger.error?.({ err }, "AI insights failed");
     res.status(500).json({ error: "AI analysis failed" });
   }
 });

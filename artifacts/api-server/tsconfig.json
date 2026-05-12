@@ -8,7 +8,9 @@
       "@workspace/db": ["../../lib/db/src/index.ts"],
       "@workspace/db/*": ["../../lib/db/src/*"],
       "@workspace/api-zod": ["../../lib/api-zod/src/index.ts"],
-      "@workspace/api-zod/*": ["../../lib/api-zod/src/*"]
+      "@workspace/api-zod/*": ["../../lib/api-zod/src/*"],
+      "@workspace/integrations-openai-ai-server": ["../../lib/integrations-openai-ai-server/src/index.ts"],
+      "@workspace/integrations-openai-ai-server/*": ["../../lib/integrations-openai-ai-server/src/*"]
     },
     "outDir": "dist",
     "rootDir": "src",

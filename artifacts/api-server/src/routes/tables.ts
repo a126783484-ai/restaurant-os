@@ -20,7 +20,22 @@ router.post("/tables", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const [table] = await db.insert(tablesTable).values(parsed.data).returning();
+
+  const { number, capacity, section, notes } = parsed.data;
+  if (typeof number !== "number" || typeof capacity !== "number") {
+    res.status(400).json({ error: "Table number and capacity are required" });
+    return;
+  }
+
+  const [table] = await db
+    .insert(tablesTable)
+    .values({
+      number,
+      capacity,
+      section: section ?? "main",
+      notes,
+    })
+    .returning();
   res.status(201).json(table);
 });
 

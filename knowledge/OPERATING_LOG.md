@@ -33,3 +33,9 @@ Remaining launch gates:
 2. Verify backend env vars: DATABASE_URL, JWT_SECRET, CORS_ORIGINS, FRONTEND_URL, NODE_ENV.
 3. Re-test register/login/session/order/KDS against production backend.
 4. Apply RLS policy hardening after backend DB access mode is confirmed.
+
+## 2026-05-13 Vercel env deployment trigger
+
+- Vercel production env vars were added for `restaurant-os-api-server`: DATABASE_URL, JWT_SECRET, CORS_ORIGINS, FRONTEND_URL, NODE_ENV.
+- Triggered a new main deployment through this operating log commit so production functions load the new env values.
+- Next validation target: `/health`, `/api/system/status`, auth register/login, database persistence, orders, and KDS.

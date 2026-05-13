@@ -5,6 +5,7 @@ import jwt from "jsonwebtoken";
 import { isDatabaseConfigured, pool } from "@workspace/db";
 import { getRequestUser, requireAuth, type AuthRole, type AuthUser } from "../middlewares/auth";
 import { revokeRuntimeSession } from "../lib/auth-sessions";
+import { getJwtSecret } from "../lib/jwt-secret";
 
 const router: IRouter = Router();
 
@@ -95,7 +96,7 @@ function createToken(user: AuthUser, sessionId: string): string {
       role: user.role,
       sid: sessionId,
     },
-    process.env.JWT_SECRET ?? "secret",
+    getJwtSecret(),
     {
       expiresIn: TOKEN_TTL_SECONDS,
       subject: String(user.id),

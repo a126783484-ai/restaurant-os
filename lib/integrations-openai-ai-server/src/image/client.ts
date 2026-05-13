@@ -1,5 +1,6 @@
 import fs from "node:fs";
-import OpenAI, { toFile } from "openai";
+import { toFile } from "openai";
+import type OpenAI from "openai";
 import { Buffer } from "node:buffer";
 import { getOpenAIClient } from "../client";
 

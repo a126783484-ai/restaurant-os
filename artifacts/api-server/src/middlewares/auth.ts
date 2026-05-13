@@ -1,6 +1,7 @@
 import jwt, { type JwtPayload } from "jsonwebtoken";
 import type { Request, Response, NextFunction, RequestHandler } from "express";
 import { isRuntimeSessionRevoked } from "../lib/auth-sessions";
+import { getJwtSecret } from "../lib/jwt-secret";
 
 type AuthRole = "admin" | "manager" | "staff" | "kitchen";
 
@@ -57,7 +58,7 @@ export const requireAuth: RequestHandler = (req, res, next): void => {
       return;
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET ?? "secret") as JwtPayload;
+    const decoded = jwt.verify(token, getJwtSecret()) as JwtPayload;
     const role = normalizeRole(decoded.role);
     const id = typeof decoded.sub === "string" ? Number(decoded.sub) : Number(decoded.id);
 

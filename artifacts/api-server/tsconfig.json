@@ -25,12 +25,11 @@
       ]
     },
     "outDir": "dist",
-    "rootDir": "../..",
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "strict": false,
     "skipLibCheck": true,
-    "noEmit": false,
+    "noEmit": true,
     "types": [
       "node"
     ]

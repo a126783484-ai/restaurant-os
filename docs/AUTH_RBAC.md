@@ -16,3 +16,7 @@
 ## Rules
 
 Backend authorization is the source of truth. Frontend guards prevent bad UX, but API routes still require bearer/cookie auth and return normalized 401/403 JSON.
+
+## JWT secret policy
+
+Production must set `JWT_SECRET`; the API fails fast when it is missing. Local development and smoke tests may use the explicit `dev-smoke-secret` fallback, and all token signing/verification flows use the shared `getJwtSecret` helper.

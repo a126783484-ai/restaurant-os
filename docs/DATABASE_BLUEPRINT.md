@@ -78,3 +78,7 @@ Order creation should accept an idempotency key to prevent double-submit from mo
 3. Add audit tables.
 4. Add workspace columns and backfill default workspace.
 5. Introduce SaaS-only billing/provider tables later.
+
+## Runtime fallback boundary
+
+Runtime in-memory data is only a resilience/demo path for local or incomplete environments. Production should persist users, sessions, orders, payments, and audit-relevant status changes in the configured database.

@@ -17,6 +17,11 @@
 
 Backend authorization is the source of truth. Frontend guards prevent bad UX, but API routes still require bearer/cookie auth and return normalized 401/403 JSON.
 
-## JWT secret policy
+## Production requirements
 
-Production must set `JWT_SECRET`; the API fails fast when it is missing. Local development and smoke tests may use the explicit `dev-smoke-secret` fallback, and all token signing/verification flows use the shared `getJwtSecret` helper.
+- Login and register must work in production.
+- Session persistence must survive browser reloads.
+- Protected routes must return `401` when unauthenticated.
+- Role-restricted routes must return `403` when authenticated but unauthorized.
+- Logout must clear the active session.
+- Auth errors must be JSON and must not expose sensitive values.

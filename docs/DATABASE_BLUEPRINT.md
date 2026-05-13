@@ -16,7 +16,7 @@ Current target: **one-store production MVP**. Keep the schema easy to operate fo
 | inventory | resources / stock / assets |
 | payment | transaction / settlement record |
 
-## A. MVP one-store required
+## MVP one-store required tables
 
 - `users`: one-store operators with name, email, password hash, role, active flag.
 - `roles`: app-level roles: admin, manager, staff, kitchen.
@@ -29,7 +29,7 @@ Current target: **one-store production MVP**. Keep the schema easy to operate fo
 - `inventory_items`: name, unit, quantity, minQuantity, cost, supplier, notes.
 - `audit_logs`: order status changes, payment status changes, auth failures, critical edits.
 
-## B. Future SaaS extension roadmap
+## Future SaaS extension roadmap
 
 Do not block the one-store MVP on these:
 
@@ -44,40 +44,6 @@ Do not block the one-store MVP on these:
 ## One-store MVP strategy
 
 Use global restaurant data for now. Avoid hardcoding assumptions that make future workspace IDs impossible; new business tables should be able to accept `workspace_id` later.
-
-## Future multi-tenant strategy
-
-Add `workspaces`, backfill a default workspace for existing rows, then require workspace-scoped queries. Multi-tenant isolation is a roadmap item, not a current launch blocker.
-
-## RBAC model
-
-MVP roles are simple:
-
-- admin / manager: full access.
-- staff: dashboard, orders, customers, reservations, inventory.
-- kitchen: KDS-focused access.
-
-A full permission matrix is deferred.
-
-## Order lifecycle
-
-Allowed states: `pending -> preparing -> ready -> completed`; `cancelled` is an exit state. Status changes should be auditable.
-
-## Payment state model
-
-Manual first: `unpaid`, `partially_paid`, `paid`, `refunded`, `cancelled`. Methods: `unpaid`, `cash`, `card`, `transfer`, `external`. Third-party gateways are roadmap only.
-
-## Idempotency strategy
-
-Order creation should accept an idempotency key to prevent double-submit from mobile taps or network retries.
-
-## Future migration strategy
-
-1. Stabilize one-store schema.
-2. Add formal migrations for auth/order/payment columns.
-3. Add audit tables.
-4. Add workspace columns and backfill default workspace.
-5. Introduce SaaS-only billing/provider tables later.
 
 ## Runtime fallback boundary
 

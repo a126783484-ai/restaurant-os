@@ -56,3 +56,10 @@ Remaining launch gates:
   - tasks insert
 - No smoke-test data was persisted because validation used explicit rollback transactions.
 - Active remaining risks: RLS hardening pending, AI env not configured, NODE_ENV value should be cleaned to plain `production`.
+
+## 2026-05-13 DATABASE_URL direct connection redeploy
+
+- Backend registration failed because the Vercel `DATABASE_URL` was using an invalid Supabase pooler user/tenant string.
+- User replaced `DATABASE_URL` with Supabase direct connection format for production.
+- Triggered a new production deployment so the API server reads the corrected connection string.
+- Next validation target: `/api/auth/diagnostics`, `/api/system/status`, register/login, session persistence, protected dashboard/orders/KDS access.

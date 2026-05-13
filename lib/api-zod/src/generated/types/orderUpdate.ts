@@ -5,10 +5,17 @@
  * Restaurant OS API
  * OpenAPI spec version: 0.1.0
  */
+import type { OrderInputItemsItem } from "./orderInputItemsItem";
 
 export interface OrderUpdate {
   status?: string;
   paymentStatus?: string;
   paymentMethod?: string;
-  notes?: string;
+  paidAmount?: number;
+  totalAmount?: number;
+  paymentNote?: string | null;
+  paidAt?: string | null;
+  tableId?: number | null;
+  notes?: string | null;
+  items?: OrderInputItemsItem[];
 }

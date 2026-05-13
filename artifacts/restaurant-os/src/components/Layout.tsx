@@ -16,19 +16,19 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { useLogout } from "@/hooks/use-auth";
+import { getCurrentUser, useLogout, type AuthRole } from "@/hooks/use-auth";
 
-const navItems = [
+const navItems: Array<{ href: string; label: string; icon: React.ElementType; roles?: AuthRole[] }> = [
   { href: "/", label: "儀表板", icon: LayoutDashboard },
-  { href: "/kitchen", label: "廚房顯示", icon: ChefHat },
-  { href: "/floor-plan", label: "樓層平面圖", icon: LayoutGrid },
-  { href: "/customers", label: "顧客管理", icon: Users },
-  { href: "/reservations", label: "訂位管理", icon: CalendarDays },
-  { href: "/orders", label: "訂單管理", icon: ShoppingBag },
-  { href: "/staff", label: "員工管理", icon: UserCog },
-  { href: "/products", label: "菜單管理", icon: UtensilsCrossed },
-  { href: "/inventory", label: "庫存管理", icon: Package },
-  { href: "/analytics", label: "AI 分析", icon: Brain },
+  { href: "/kitchen", label: "廚房顯示", icon: ChefHat, roles: ["admin", "manager", "kitchen"] },
+  { href: "/floor-plan", label: "樓層平面圖", icon: LayoutGrid, roles: ["admin", "manager", "staff"] },
+  { href: "/customers", label: "顧客管理", icon: Users, roles: ["admin", "manager", "staff"] },
+  { href: "/reservations", label: "訂位管理", icon: CalendarDays, roles: ["admin", "manager", "staff"] },
+  { href: "/orders", label: "訂單管理", icon: ShoppingBag, roles: ["admin", "manager", "staff"] },
+  { href: "/staff", label: "員工管理", icon: UserCog, roles: ["admin", "manager"] },
+  { href: "/products", label: "菜單管理", icon: UtensilsCrossed, roles: ["admin", "manager", "staff"] },
+  { href: "/inventory", label: "庫存管理", icon: Package, roles: ["admin", "manager", "staff"] },
+  { href: "/analytics", label: "AI 分析", icon: Brain, roles: ["admin", "manager"] },
 ];
 
 function NavLink({ href, label, icon: Icon, onClick }: { href: string; label: string; icon: React.ElementType; onClick?: () => void }) {
@@ -74,6 +74,8 @@ function LogoutButton({ onClick }: { onClick?: () => void }) {
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const currentUser = getCurrentUser();
+  const visibleNavItems = navItems.filter((item) => !item.roles?.length || (currentUser && item.roles.includes(currentUser.role)));
 
   const sidebar = (
     <div className="flex flex-col h-full">
@@ -87,7 +89,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </div>
       </div>
       <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
-        {navItems.map((item) => (
+        {visibleNavItems.map((item) => (
           <NavLink key={item.href} {...item} onClick={() => setMobileOpen(false)} />
         ))}
       </nav>

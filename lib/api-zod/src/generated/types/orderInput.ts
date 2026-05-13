@@ -12,5 +12,6 @@ export interface OrderInput {
   tableId?: number;
   type: string;
   notes?: string;
+  idempotencyKey?: string;
   items: OrderInputItemsItem[];
 }

@@ -3,7 +3,7 @@
 You are the autonomous engineering agent for restaurant-os.
 
 ## Mission
-Restore, stabilize, and productionize restaurant-os into a real SaaS restaurant operating system.
+Restore, stabilize, and productionize restaurant-os into a one-store restaurant operating MVP first, with SaaS expansion deferred.
 
 Current highest priority:
 1. Frontend Recovery & Deployment
@@ -11,7 +11,7 @@ Current highest priority:
 3. Mobile-first UX
 4. Kitchen Display System (KDS) stability
 5. Order consistency and transaction safety
-6. SaaS operational readiness
+6. One-store operational readiness
 
 ---
 
@@ -92,3 +92,16 @@ The task is NOT complete until:
 - Core restaurant workflows render correctly
 - Mobile UI works
 - Deployment URL is usable
+
+---
+
+# Knowledge Base
+
+Before large changes, review:
+- `knowledge/SECOND_BRAIN_INDEX.md`
+- `docs/SYSTEM_ARCHITECTURE.md`
+- `docs/DATABASE_BLUEPRINT.md`
+- `docs/AUTH_RBAC.md`
+- `docs/CODEX_WORKFLOW.md`
+
+Current scope is one-store production baseline: auth, orders, manual payments, KDS, dashboard, and mobile usability. Keep future SaaS expansion possible, but do not over-engineer it into P0.

@@ -118,7 +118,7 @@ function KDSCard({ orderId, onAdvance }: { orderId: number; onAdvance: () => voi
         <button
           onClick={handleAdvance}
           disabled={updateOrder.isPending}
-          className={cn("w-full py-2.5 rounded-lg text-sm font-bold transition-colors disabled:opacity-60", cfg.btn)}
+          className={cn("w-full min-h-11 py-2.5 rounded-lg text-sm font-bold transition-colors disabled:opacity-60", cfg.btn)}
         >
           {updateOrder.isPending ? "更新中…" : order.status === "pending" ? "開始備餐 →" : order.status === "preparing" ? "出餐完成 ✓" : "完成 ✓"}
         </button>
@@ -153,9 +153,9 @@ function Column({ title, badge, orderIds, onAdvance }: { title: string; badge: s
 
 export default function KitchenDisplay() {
   const queryClient = useQueryClient();
-  const { data: pending } = useListOrders({ status: "pending" });
-  const { data: preparing } = useListOrders({ status: "preparing" });
-  const { data: ready } = useListOrders({ status: "ready" });
+  const { data: pending, isLoading: pendingLoading, error: pendingError } = useListOrders({ status: "pending" });
+  const { data: preparing, isLoading: preparingLoading, error: preparingError } = useListOrders({ status: "preparing" });
+  const { data: ready, isLoading: readyLoading, error: readyError } = useListOrders({ status: "ready" });
   const [lastRefresh, setLastRefresh] = useState(new Date());
 
   useEffect(() => {
@@ -175,11 +175,13 @@ export default function KitchenDisplay() {
   const preparingIds = (preparing ?? []).map(o => o.id);
   const readyIds = (ready ?? []).map(o => o.id);
   const total = pendingIds.length + preparingIds.length + readyIds.length;
+  const loading = pendingLoading || preparingLoading || readyLoading;
+  const error = pendingError || preparingError || readyError;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="px-6 py-4 border-b border-border bg-background/90 backdrop-blur-sm shrink-0">
-        <div className="flex items-center justify-between">
+      <div className="px-4 sm:px-6 py-4 border-b border-border bg-background/90 backdrop-blur-sm shrink-0">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-orange-500 flex items-center justify-center">
               <ChefHat className="h-4 w-4 text-white" />
@@ -191,18 +193,29 @@ export default function KitchenDisplay() {
               </p>
             </div>
           </div>
-          <Button variant="outline" size="sm" onClick={refresh} className="gap-1.5">
+          <Button variant="outline" size="sm" onClick={refresh} className="gap-1.5 min-h-11 self-start sm:self-auto">
             <RefreshCw className="h-3.5 w-3.5" /> 重新整理
           </Button>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+        {error && (
+          <div className="mb-4 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive max-w-6xl mx-auto">
+            KDS 暫時無法讀取訂單，請重新整理。
+          </div>
+        )}
+        {loading ? (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-6xl mx-auto">
+            {Array.from({ length: 3 }).map((_, i) => <div key={i} className="h-48 rounded-xl bg-muted animate-pulse" />)}
+          </div>
+        ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-6xl mx-auto">
           <Column title="待處理" badge="bg-amber-500" orderIds={pendingIds} onAdvance={refresh} />
           <Column title="準備中" badge="bg-blue-500" orderIds={preparingIds} onAdvance={refresh} />
           <Column title="已備妥" badge="bg-green-500" orderIds={readyIds} onAdvance={refresh} />
         </div>
+        )}
       </div>
     </div>
   );

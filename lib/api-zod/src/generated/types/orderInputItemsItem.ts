@@ -9,5 +9,5 @@
 export type OrderInputItemsItem = {
   productId: number;
   quantity: number;
-  notes?: string;
+  notes?: string | null;
 };

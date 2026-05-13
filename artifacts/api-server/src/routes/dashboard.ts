@@ -1,10 +1,15 @@
 import { Router, type IRouter } from "express";
 import { gte, eq, and, sql } from "drizzle-orm";
-import { db, ordersTable, orderItemsTable, productsTable, customersTable, reservationsTable, visitsTable } from "@workspace/db";
+import { db, isDatabaseConfigured, ordersTable, orderItemsTable, productsTable, customersTable, reservationsTable, visitsTable } from "@workspace/db";
+import { getRuntimeCustomerFlow, getRuntimeDashboardSummary, getRuntimeRecentActivity, getRuntimeTopProducts } from "../lib/one-store-runtime";
 
 const router: IRouter = Router();
 
 router.get("/dashboard/summary", async (_req, res): Promise<void> => {
+  if (!isDatabaseConfigured()) {
+    res.json(getRuntimeDashboardSummary());
+    return;
+  }
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
@@ -54,6 +59,10 @@ router.get("/dashboard/summary", async (_req, res): Promise<void> => {
 });
 
 router.get("/dashboard/top-products", async (_req, res): Promise<void> => {
+  if (!isDatabaseConfigured()) {
+    res.json(getRuntimeTopProducts());
+    return;
+  }
   const result = await db
     .select({
       productId: orderItemsTable.productId,
@@ -80,6 +89,10 @@ router.get("/dashboard/top-products", async (_req, res): Promise<void> => {
 });
 
 router.get("/dashboard/customer-flow", async (_req, res): Promise<void> => {
+  if (!isDatabaseConfigured()) {
+    res.json(getRuntimeCustomerFlow());
+    return;
+  }
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
@@ -105,6 +118,10 @@ router.get("/dashboard/customer-flow", async (_req, res): Promise<void> => {
 });
 
 router.get("/dashboard/recent-activity", async (_req, res): Promise<void> => {
+  if (!isDatabaseConfigured()) {
+    res.json(getRuntimeRecentActivity());
+    return;
+  }
   const activity: { id: string; type: string; description: string; amount: number | null; createdAt: string }[] = [];
 
   const recentOrders = await db.select().from(ordersTable).orderBy(sql`${ordersTable.createdAt} DESC`).limit(5);

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link } from "wouter";
 import {
   useListOrders,
@@ -28,8 +28,10 @@ const ORDER_STATUS_LABELS: Record<string, string> = {
 
 const PAY_STATUS_LABELS: Record<string, string> = {
   unpaid: "未付款",
+  partially_paid: "部分付款",
   paid: "已付款",
   refunded: "已退款",
+  cancelled: "已取消",
 };
 
 const ORDER_TYPE_LABELS: Record<string, string> = {
@@ -47,8 +49,10 @@ const ORDER_STATUS_COLORS: Record<string, string> = {
 
 const PAY_STATUS_COLORS: Record<string, string> = {
   unpaid: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
+  partially_paid: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
   paid: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300",
   refunded: "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300",
+  cancelled: "bg-muted text-muted-foreground",
 };
 
 interface OrderFormValues {
@@ -62,10 +66,11 @@ export default function Orders() {
   const [typeFilter, setTypeFilter] = useState("all");
   const [showCreate, setShowCreate] = useState(false);
   const [orderItems, setOrderItems] = useState<{ productId: number; name: string; price: number; quantity: number }[]>([]);
+  const idempotencyRef = useRef<string>(crypto.randomUUID());
 
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const { data: orders, isLoading } = useListOrders({
+  const { data: orders, isLoading, error } = useListOrders({
     status: statusFilter !== "all" ? statusFilter : undefined,
     type: typeFilter !== "all" ? typeFilter : undefined,
   });
@@ -99,6 +104,7 @@ export default function Orders() {
           type: data.type,
           tableId: (data.tableId && data.tableId !== "__none__") ? Number(data.tableId) : undefined,
           notes: data.notes || undefined,
+          idempotencyKey: idempotencyRef.current,
           items: orderItems.map(i => ({ productId: i.productId, quantity: i.quantity })),
         },
       },
@@ -108,21 +114,22 @@ export default function Orders() {
           setShowCreate(false);
           setOrderItems([]);
           reset();
+          idempotencyRef.current = crypto.randomUUID();
           toast({ title: "訂單已建立" });
         },
-        onError: () => toast({ title: "建立訂單失敗", variant: "destructive" }),
+        onError: () => toast({ title: "建立訂單失敗", description: "請檢查品項或稍後再試。", variant: "destructive" }),
       }
     );
   };
 
   return (
-    <div className="p-6 space-y-5 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between">
+    <div className="p-4 sm:p-6 space-y-5 max-w-5xl mx-auto overflow-x-hidden">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-foreground">訂單管理</h1>
           <p className="text-sm text-muted-foreground mt-0.5">{isLoading ? "載入中…" : `共 ${orders?.length ?? 0} 筆訂單`}</p>
         </div>
-        <Button data-testid="button-new-order" onClick={() => setShowCreate(true)} size="sm" className="gap-1.5">
+        <Button data-testid="button-new-order" onClick={() => setShowCreate(true)} size="sm" className="gap-1.5 min-h-11">
           <Plus className="h-4 w-4" /> 新增訂單
         </Button>
       </div>
@@ -151,6 +158,12 @@ export default function Orders() {
         </Select>
       </div>
 
+      {error && (
+        <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          訂單 API 暫時無法讀取，請重新整理或稍後再試。
+        </div>
+      )}
+
       <div className="bg-card border border-card-border rounded-xl overflow-hidden">
         <div className="flex items-center gap-3 px-5 py-2.5 bg-muted/40 border-b border-border text-xs font-semibold text-muted-foreground uppercase tracking-wider">
           <span className="w-12">訂單</span>
@@ -167,7 +180,7 @@ export default function Orders() {
         ) : orders && orders.length > 0 ? (
           orders.map(order => (
             <Link key={order.id} href={`/orders/${order.id}`}>
-              <div data-testid={`row-order-${order.id}`} className="flex items-center gap-3 px-5 py-3.5 hover:bg-muted/50 transition-colors cursor-pointer border-b border-border last:border-b-0">
+              <div data-testid={`row-order-${order.id}`} className="flex items-center gap-3 px-4 sm:px-5 py-3.5 hover:bg-muted/50 transition-colors cursor-pointer border-b border-border last:border-b-0">
                 <span className="w-12 text-sm font-mono font-semibold text-muted-foreground">#{order.id}</span>
                 <div className="flex-1">
                   <p className="text-sm font-medium text-foreground">{ORDER_TYPE_LABELS[order.type] ?? order.type}</p>
@@ -194,10 +207,10 @@ export default function Orders() {
       </div>
 
       <Dialog open={showCreate} onOpenChange={open => { if (!open) { setOrderItems([]); reset(); } setShowCreate(open); }}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>新增訂單</DialogTitle></DialogHeader>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 pt-2">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <label className="text-sm font-medium">訂單類型</label>
                 <Controller control={control} name="type" render={({ field }) => (
@@ -236,13 +249,13 @@ export default function Orders() {
                       <p className="text-xs text-muted-foreground">{p.category} — ${p.price.toFixed(2)}</p>
                     </div>
                     <div className="flex items-center gap-1.5">
-                      <Button type="button" variant="outline" size="icon" className="h-6 w-6" onClick={() => removeItem(p.id)}>
+                      <Button type="button" variant="outline" size="icon" className="h-9 w-9" onClick={() => removeItem(p.id)}>
                         <Minus className="h-3 w-3" />
                       </Button>
                       <span className="text-sm w-5 text-center font-medium">
                         {orderItems.find(i => i.productId === p.id)?.quantity ?? 0}
                       </span>
-                      <Button type="button" variant="outline" size="icon" className="h-6 w-6" onClick={() => addItem(p.id)} data-testid={`button-add-item-${p.id}`}>
+                      <Button type="button" variant="outline" size="icon" className="h-9 w-9" onClick={() => addItem(p.id)} data-testid={`button-add-item-${p.id}`}>
                         <Plus className="h-3 w-3" />
                       </Button>
                     </div>
@@ -270,9 +283,9 @@ export default function Orders() {
               <label className="text-sm font-medium">備註</label>
               <Input data-testid="input-order-notes" placeholder="特殊需求…" {...register("notes")} />
             </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => { setShowCreate(false); setOrderItems([]); reset(); }}>取消</Button>
-              <Button data-testid="button-submit-order" type="submit" disabled={createOrder.isPending || orderItems.length === 0}>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button className="min-h-11" type="button" variant="outline" onClick={() => { setShowCreate(false); setOrderItems([]); reset(); }}>取消</Button>
+              <Button className="min-h-11" data-testid="button-submit-order" type="submit" disabled={createOrder.isPending || orderItems.length === 0}>
                 {createOrder.isPending ? "建立中…" : `建立訂單（$${total.toFixed(2)}）`}
               </Button>
             </DialogFooter>

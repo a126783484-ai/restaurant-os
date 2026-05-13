@@ -17,7 +17,12 @@ export interface Order {
   paymentStatus: string;
   /** @nullable */
   paymentMethod?: string | null;
+  paidAmount?: number;
   totalAmount: number;
+  /** @nullable */
+  paymentNote?: string | null;
+  /** @nullable */
+  paidAt?: string | null;
   /** @nullable */
   notes?: string | null;
   createdAt: string;

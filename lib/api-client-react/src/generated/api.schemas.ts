@@ -158,7 +158,12 @@ export interface Order {
   paymentStatus: string;
   /** @nullable */
   paymentMethod?: string | null;
+  paidAmount?: number;
   totalAmount: number;
+  /** @nullable */
+  paymentNote?: string | null;
+  /** @nullable */
+  paidAt?: string | null;
   /** @nullable */
   notes?: string | null;
   createdAt: string;
@@ -187,7 +192,12 @@ export interface OrderDetail {
   paymentStatus: string;
   /** @nullable */
   paymentMethod?: string | null;
+  paidAmount?: number;
   totalAmount: number;
+  /** @nullable */
+  paymentNote?: string | null;
+  /** @nullable */
+  paidAt?: string | null;
   /** @nullable */
   notes?: string | null;
   createdAt: string;
@@ -197,7 +207,7 @@ export interface OrderDetail {
 export type OrderInputItemsItem = {
   productId: number;
   quantity: number;
-  notes?: string;
+  notes?: string | null;
 };
 
 export interface OrderInput {
@@ -205,6 +215,7 @@ export interface OrderInput {
   tableId?: number;
   type: string;
   notes?: string;
+  idempotencyKey?: string;
   items: OrderInputItemsItem[];
 }
 
@@ -212,7 +223,13 @@ export interface OrderUpdate {
   status?: string;
   paymentStatus?: string;
   paymentMethod?: string;
-  notes?: string;
+  paidAmount?: number;
+  totalAmount?: number;
+  paymentNote?: string | null;
+  paidAt?: string | null;
+  tableId?: number | null;
+  notes?: string | null;
+  items?: OrderInputItemsItem[];
 }
 
 export interface StaffMember {

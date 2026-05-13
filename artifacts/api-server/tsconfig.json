@@ -5,36 +5,20 @@
     "moduleResolution": "node",
     "baseUrl": ".",
     "paths": {
-      "@workspace/db": [
-        "../../lib/db/src/index.ts"
-      ],
-      "@workspace/db/*": [
-        "../../lib/db/src/*"
-      ],
-      "@workspace/api-zod": [
-        "../../lib/api-zod/src/index.ts"
-      ],
-      "@workspace/api-zod/*": [
-        "../../lib/api-zod/src/*"
-      ],
-      "@workspace/integrations-openai-ai-server": [
-        "../../lib/integrations-openai-ai-server/src/index.ts"
-      ],
-      "@workspace/integrations-openai-ai-server/*": [
-        "../../lib/integrations-openai-ai-server/src/*"
-      ]
+      "@workspace/db": ["../../lib/db/src/index.ts"],
+      "@workspace/db/*": ["../../lib/db/src/*"],
+      "@workspace/api-zod": ["../../lib/api-zod/src/index.ts"],
+      "@workspace/api-zod/*": ["../../lib/api-zod/src/*"],
+      "@workspace/integrations-openai-ai-server": ["../../lib/integrations-openai-ai-server/src/index.ts"],
+      "@workspace/integrations-openai-ai-server/*": ["../../lib/integrations-openai-ai-server/src/*"]
     },
     "outDir": "dist",
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "strict": false,
     "skipLibCheck": true,
-    "noEmit": true,
-    "types": [
-      "node"
-    ]
+    "noEmit": false,
+    "types": ["node"]
   },
-  "include": [
-    "src/**/*"
-  ]
+  "include": ["src/**/*"]
 }

@@ -1,16 +1,9 @@
 import fs from "node:fs";
 import { toFile } from "openai";
-import type OpenAI from "openai";
+import { openai } from "../client";
 import { Buffer } from "node:buffer";
-import { getOpenAIClient } from "../client";
 
-export const openai = new Proxy({} as OpenAI, {
-  get(_target, property, receiver) {
-    const client = getOpenAIClient();
-    return Reflect.get(client, property, receiver);
-  },
-});
-
+export { openai };
 export async function generateImageBuffer(
   prompt: string,
   size: "1024x1024" | "512x512" | "256x256" = "1024x1024"

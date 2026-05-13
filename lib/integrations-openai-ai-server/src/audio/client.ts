@@ -1,20 +1,13 @@
 import { toFile } from "openai";
-import type OpenAI from "openai";
+import { openai } from "../client";
 import { Buffer } from "node:buffer";
 import { spawn } from "child_process";
 import { writeFile, unlink, readFile } from "fs/promises";
 import { randomUUID } from "crypto";
 import { tmpdir } from "os";
 import { join } from "path";
-import { getOpenAIClient } from "../client";
 
-export const openai = new Proxy({} as OpenAI, {
-  get(_target, property, receiver) {
-    const client = getOpenAIClient();
-    return Reflect.get(client, property, receiver);
-  },
-});
-
+export { openai };
 export type AudioFormat = "wav" | "mp3" | "webm" | "mp4" | "ogg" | "unknown";
 
 /**

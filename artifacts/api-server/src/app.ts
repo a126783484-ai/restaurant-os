@@ -10,6 +10,44 @@ const app = express();
 let routesLoaded = false;
 let routesLoadError: string | null = null;
 
+function isProductionRuntime(): boolean {
+  const nodeEnv = process.env.NODE_ENV?.trim().toLowerCase() ?? "";
+  return nodeEnv === "production" || nodeEnv.includes("production");
+}
+
+function getSafeDatabaseUrlDiagnostic() {
+  const raw = process.env.DATABASE_URL?.trim();
+  if (!raw) return { configured: false };
+
+  try {
+    const parsed = new URL(raw);
+    return {
+      configured: true,
+      protocol: parsed.protocol,
+      username: parsed.username,
+      hostname: parsed.hostname,
+      port: parsed.port,
+      database: parsed.pathname.replace(/^\//, ""),
+      isPooler: parsed.hostname.includes("pooler.supabase.com"),
+      isDirectSupabase: parsed.hostname.startsWith("db.") && parsed.hostname.endsWith(".supabase.co"),
+    };
+  } catch {
+    return { configured: true, parseError: true };
+  }
+}
+
+function isDatabaseConnectionError(message: string): boolean {
+  return [
+    "ENOTFOUND",
+    "ECONNREFUSED",
+    "timeout",
+    "tenant/user",
+    "password authentication failed",
+    "Connection terminated",
+    "database",
+  ].some((pattern) => message.includes(pattern));
+}
+
 const requestContextMiddleware: RequestHandler = (req, res, next) => {
   const startedAt = process.hrtime.bigint();
   const requestId =
@@ -65,6 +103,7 @@ const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
         : 500;
   const safeStatusCode = statusCode >= 400 && statusCode < 600 ? statusCode : 500;
   const message = err instanceof Error ? err.message : String(err);
+  const dbError = isDatabaseConnectionError(message);
 
   logger.error(
     {
@@ -72,6 +111,7 @@ const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
       method: req.method,
       url: req.originalUrl,
       statusCode: safeStatusCode,
+      databaseUrl: getSafeDatabaseUrlDiagnostic(),
     },
     "request failed",
   );
@@ -79,10 +119,11 @@ const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
   res.status(safeStatusCode).json({
     ok: false,
     error: {
-      code: safeStatusCode >= 500 ? "INTERNAL_SERVER_ERROR" : "REQUEST_FAILED",
+      code: dbError ? "DATABASE_CONNECTION_ERROR" : safeStatusCode >= 500 ? "INTERNAL_SERVER_ERROR" : "REQUEST_FAILED",
       message: safeStatusCode >= 500 ? "Internal Server Error" : message,
     },
-    message: process.env.NODE_ENV === "production" && safeStatusCode >= 500 ? undefined : message,
+    message: dbError || !isProductionRuntime() ? message : undefined,
+    diagnostics: dbError ? { databaseUrl: getSafeDatabaseUrlDiagnostic() } : undefined,
     timestamp: new Date().toISOString(),
   });
 };
@@ -103,7 +144,7 @@ const allowedCorsOrigins = new Set([...defaultCorsOrigins, ...configuredCorsOrig
 
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || allowedCorsOrigins.has(origin) || process.env.NODE_ENV !== "production") {
+    if (!origin || allowedCorsOrigins.has(origin) || !isProductionRuntime()) {
       callback(null, true);
       return;
     }
@@ -123,6 +164,7 @@ app.get("/health", (_req, res) => {
     runtime: "alive",
     routesLoaded,
     routesLoadError,
+    databaseUrl: getSafeDatabaseUrlDiagnostic(),
     timestamp: new Date().toISOString(),
   });
 });
@@ -132,6 +174,7 @@ app.get("/api/status", (_req, res) => {
     ok: routesLoaded,
     routesLoaded,
     routesLoadError,
+    databaseUrl: getSafeDatabaseUrlDiagnostic(),
     timestamp: new Date().toISOString(),
   });
 });
@@ -153,6 +196,7 @@ async function loadApplicationRoutes() {
         ok: false,
         error: "API routes failed to load",
         message: routesLoadError,
+        databaseUrl: getSafeDatabaseUrlDiagnostic(),
         timestamp: new Date().toISOString(),
       });
     });

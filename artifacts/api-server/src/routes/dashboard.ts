@@ -1,60 +1,75 @@
 import { Router, type IRouter } from "express";
-import { gte, eq, and, sql } from "drizzle-orm";
+import { gte, eq, sql } from "drizzle-orm";
 import { db, isDatabaseConfigured, ordersTable, orderItemsTable, productsTable, customersTable, reservationsTable, visitsTable } from "@workspace/db";
 import { getRuntimeCustomerFlow, getRuntimeDashboardSummary, getRuntimeRecentActivity, getRuntimeTopProducts } from "../lib/one-store-runtime";
 
 const router: IRouter = Router();
+
+function startOfDay(): Date {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function sevenDaysAgo(): Date {
+  const date = new Date();
+  date.setDate(date.getDate() - 7);
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function roundMoney(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function isActiveOrder(order: { status: string }): boolean {
+  return order.status !== "cancelled";
+}
+
+function countsAsRevenue(order: { status: string; paymentStatus: string }): boolean {
+  return order.status === "completed" || order.paymentStatus === "paid";
+}
 
 router.get("/dashboard/summary", async (_req, res): Promise<void> => {
   if (!isDatabaseConfigured()) {
     res.json(getRuntimeDashboardSummary());
     return;
   }
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
 
-  const weekStart = new Date();
-  weekStart.setDate(weekStart.getDate() - 7);
-  weekStart.setHours(0, 0, 0, 0);
+  const today = startOfDay();
+  const week = sevenDaysAgo();
 
-  // Today's orders
-  const todayOrders = await db.select().from(ordersTable).where(
-    and(gte(ordersTable.createdAt, todayStart), eq(ordersTable.status, "completed"))
-  );
+  const todayOrders = await db.select().from(ordersTable).where(gte(ordersTable.createdAt, today));
+  const activeTodayOrders = todayOrders.filter(isActiveOrder);
+  const todaySales = activeTodayOrders.filter(countsAsRevenue).reduce((sum, order) => sum + order.totalAmount, 0);
 
-  const todaySales = todayOrders.reduce((sum, o) => sum + o.totalAmount, 0);
+  const weekOrders = await db.select().from(ordersTable).where(gte(ordersTable.createdAt, week));
+  const weekSales = weekOrders.filter((order) => isActiveOrder(order) && countsAsRevenue(order)).reduce((sum, order) => sum + order.totalAmount, 0);
 
-  // Week sales
-  const weekOrders = await db.select().from(ordersTable).where(
-    and(gte(ordersTable.createdAt, weekStart), eq(ordersTable.status, "completed"))
-  );
-  const weekSales = weekOrders.reduce((sum, o) => sum + o.totalAmount, 0);
+  const todayVisits = await db.select().from(visitsTable).where(gte(visitsTable.visitedAt, today));
+  const customerIds = new Set(todayVisits.map((visit) => visit.customerId));
+  const visitOrderIds = new Set(todayVisits.map((visit) => visit.orderId).filter(Boolean));
 
-  // Today's customers (unique via visits)
-  const todayVisits = await db.select().from(visitsTable).where(gte(visitsTable.visitedAt, todayStart));
-  const todayCustomers = new Set(todayVisits.map(v => v.customerId)).size;
+  let orderFallbackCustomers = 0;
+  for (const order of activeTodayOrders) {
+    if (order.customerId) customerIds.add(order.customerId);
+    if (!order.customerId && !visitOrderIds.has(order.id)) orderFallbackCustomers += 1;
+  }
 
-  // Repeat customer rate
   const allCustomers = await db.select().from(customersTable);
-  const repeatCustomers = allCustomers.filter(c => c.visitCount > 1).length;
+  const repeatCustomers = allCustomers.filter((customer) => customer.visitCount > 1).length;
   const repeatCustomerRate = allCustomers.length > 0 ? (repeatCustomers / allCustomers.length) * 100 : 0;
-
-  // Pending orders
   const pendingOrders = await db.select().from(ordersTable).where(eq(ordersTable.status, "pending"));
-
-  // Active reservations (pending + confirmed)
-  const activeReservations = await db.select().from(reservationsTable).where(
-    sql`${reservationsTable.status} IN ('pending', 'confirmed', 'seated')`
-  );
+  const activeReservations = await db.select().from(reservationsTable).where(sql`${reservationsTable.status} IN ('pending', 'confirmed', 'seated')`);
 
   res.json({
-    todaySales: Math.round(todaySales * 100) / 100,
-    todayOrders: todayOrders.length,
-    todayCustomers,
+    todaySales: roundMoney(todaySales),
+    todayOrders: activeTodayOrders.length,
+    todayCustomers: customerIds.size + orderFallbackCustomers,
     repeatCustomerRate: Math.round(repeatCustomerRate * 10) / 10,
     pendingOrders: pendingOrders.length,
     activeReservations: activeReservations.length,
-    weekSales: Math.round(weekSales * 100) / 100,
+    weekSales: roundMoney(weekSales),
   });
 });
 
@@ -63,6 +78,7 @@ router.get("/dashboard/top-products", async (_req, res): Promise<void> => {
     res.json(getRuntimeTopProducts());
     return;
   }
+
   const result = await db
     .select({
       productId: orderItemsTable.productId,
@@ -75,17 +91,14 @@ router.get("/dashboard/top-products", async (_req, res): Promise<void> => {
     .orderBy(sql`SUM(${orderItemsTable.quantity}) DESC`)
     .limit(10);
 
-  // Enrich with category
   const products = await db.select().from(productsTable);
-  const productMap = new Map(products.map(p => [p.id, p.category]));
+  const productMap = new Map(products.map((product) => [product.id, product.category]));
 
-  const topProducts = result.map(r => ({
-    ...r,
-    category: productMap.get(r.productId) ?? "Unknown",
-    totalRevenue: Math.round(r.totalRevenue * 100) / 100,
-  }));
-
-  res.json(topProducts);
+  res.json(result.map((item) => ({
+    ...item,
+    category: productMap.get(item.productId) ?? "Unknown",
+    totalRevenue: roundMoney(item.totalRevenue),
+  })));
 });
 
 router.get("/dashboard/customer-flow", async (_req, res): Promise<void> => {
@@ -93,28 +106,31 @@ router.get("/dashboard/customer-flow", async (_req, res): Promise<void> => {
     res.json(getRuntimeCustomerFlow());
     return;
   }
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
 
-  const visits = await db.select().from(visitsTable).where(gte(visitsTable.visitedAt, todayStart));
+  const today = startOfDay();
+  const visits = await db.select().from(visitsTable).where(gte(visitsTable.visitedAt, today));
+  const orders = await db.select().from(ordersTable).where(gte(ordersTable.createdAt, today));
+  const visitOrderIds = new Set(visits.map((visit) => visit.orderId).filter(Boolean));
 
-  // Group by hour
   const hourMap: Record<string, number> = {};
-  for (let h = 8; h <= 22; h++) {
-    const label = `${h.toString().padStart(2, "0")}:00`;
-    hourMap[label] = 0;
+  for (let hour = 8; hour <= 22; hour += 1) {
+    hourMap[`${hour.toString().padStart(2, "0")}:00`] = 0;
   }
 
   for (const visit of visits) {
     const hour = new Date(visit.visitedAt).getHours();
     const label = `${hour.toString().padStart(2, "0")}:00`;
-    if (hourMap[label] !== undefined) {
-      hourMap[label]++;
-    }
+    if (hourMap[label] !== undefined) hourMap[label] += 1;
   }
 
-  const flow = Object.entries(hourMap).map(([hour, customers]) => ({ hour, customers }));
-  res.json(flow);
+  for (const order of orders) {
+    if (!isActiveOrder(order) || visitOrderIds.has(order.id)) continue;
+    const hour = new Date(order.createdAt).getHours();
+    const label = `${hour.toString().padStart(2, "0")}:00`;
+    if (hourMap[label] !== undefined) hourMap[label] += 1;
+  }
+
+  res.json(Object.entries(hourMap).map(([hour, customers]) => ({ hour, customers })));
 });
 
 router.get("/dashboard/recent-activity", async (_req, res): Promise<void> => {
@@ -122,8 +138,8 @@ router.get("/dashboard/recent-activity", async (_req, res): Promise<void> => {
     res.json(getRuntimeRecentActivity());
     return;
   }
-  const activity: { id: string; type: string; description: string; amount: number | null; createdAt: string }[] = [];
 
+  const activity: { id: string; type: string; description: string; amount: number | null; createdAt: string }[] = [];
   const recentOrders = await db.select().from(ordersTable).orderBy(sql`${ordersTable.createdAt} DESC`).limit(5);
   for (const order of recentOrders) {
     activity.push({
@@ -136,28 +152,27 @@ router.get("/dashboard/recent-activity", async (_req, res): Promise<void> => {
   }
 
   const recentReservations = await db.select().from(reservationsTable).orderBy(sql`${reservationsTable.createdAt} DESC`).limit(5);
-  for (const r of recentReservations) {
+  for (const reservation of recentReservations) {
     activity.push({
-      id: `reservation-${r.id}`,
+      id: `reservation-${reservation.id}`,
       type: "reservation",
-      description: `Reservation for ${r.customerName} — party of ${r.partySize} (${r.status})`,
+      description: `Reservation for ${reservation.customerName} — party of ${reservation.partySize} (${reservation.status})`,
       amount: null,
-      createdAt: r.createdAt.toISOString(),
+      createdAt: reservation.createdAt.toISOString(),
     });
   }
 
   const recentCustomers = await db.select().from(customersTable).orderBy(sql`${customersTable.createdAt} DESC`).limit(3);
-  for (const c of recentCustomers) {
+  for (const customer of recentCustomers) {
     activity.push({
-      id: `customer-${c.id}`,
+      id: `customer-${customer.id}`,
       type: "customer",
-      description: `New customer: ${c.name}`,
+      description: `New customer: ${customer.name}`,
       amount: null,
-      createdAt: c.createdAt.toISOString(),
+      createdAt: customer.createdAt.toISOString(),
     });
   }
 
-  // Sort by createdAt desc and take top 15
   activity.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   res.json(activity.slice(0, 15));
 });

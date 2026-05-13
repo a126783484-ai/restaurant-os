@@ -10,3 +10,4 @@ export * from "./shifts";
 export * from "./tasks";
 export * from "./payments";
 export * from "./inventory";
+export * from "./users";

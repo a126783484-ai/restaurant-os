@@ -17,14 +17,14 @@ import KitchenDisplay from "@/pages/KitchenDisplay";
 import Inventory from "@/pages/Inventory";
 import Analytics from "@/pages/Analytics";
 import NotFound from "@/pages/not-found";
-import { isAuthenticated, clearToken } from "@/hooks/use-auth";
+import { clearToken, useAuthSession, type AuthRole } from "@/hooks/use-auth";
 import { ApiError } from "@workspace/api-client-react";
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       retry: (failureCount, error) => {
-        if (error instanceof ApiError && error.status === 401) return false;
+        if (error instanceof ApiError && (error.status === 401 || error.status === 403)) return false;
         return failureCount < 1;
       },
       staleTime: 30_000,
@@ -40,38 +40,88 @@ const queryClient = new QueryClient({
   },
 });
 
-function AuthGuard({ children }: { children: React.ReactNode }) {
-  if (!isAuthenticated()) {
+function AccessDenied({ message }: { message: string }) {
+  return (
+    <div className="min-h-[60vh] px-4 py-10 flex items-center justify-center">
+      <div className="max-w-md rounded-2xl border border-border bg-card p-6 text-center shadow-sm">
+        <h1 className="text-xl font-semibold text-foreground">權限不足</h1>
+        <p className="mt-2 text-sm text-muted-foreground">{message}</p>
+      </div>
+    </div>
+  );
+}
+
+function AuthGuard({ children, roles }: { children: React.ReactNode; roles?: AuthRole[] }) {
+  const { user, loading, error } = useAuthSession();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background px-4 text-sm text-muted-foreground">
+        正在驗證登入狀態…
+      </div>
+    );
+  }
+
+  if (!user) {
     return <Redirect to="/login" />;
   }
+
+  if (roles?.length && !roles.includes(user.role)) {
+    return <AccessDenied message={error ?? "你的角色無法存取此頁面。請切換帳號或聯絡系統管理員。"} />;
+  }
+
   return <>{children}</>;
+}
+
+function ProtectedPage({ children, roles }: { children: React.ReactNode; roles?: AuthRole[] }) {
+  return (
+    <AuthGuard roles={roles}>
+      <Layout>{children}</Layout>
+    </AuthGuard>
+  );
 }
 
 function Router() {
   return (
     <Switch>
       <Route path="/login" component={LoginPage} />
-      <Route>
-        <AuthGuard>
-          <Layout>
-            <Switch>
-              <Route path="/" component={Dashboard} />
-              <Route path="/kitchen" component={KitchenDisplay} />
-              <Route path="/customers/:id" component={CustomerProfile} />
-              <Route path="/customers" component={Customers} />
-              <Route path="/reservations" component={Reservations} />
-              <Route path="/orders/:id" component={OrderDetail} />
-              <Route path="/orders" component={Orders} />
-              <Route path="/staff" component={Staff} />
-              <Route path="/products" component={Products} />
-              <Route path="/floor-plan" component={FloorPlan} />
-              <Route path="/inventory" component={Inventory} />
-              <Route path="/analytics" component={Analytics} />
-              <Route component={NotFound} />
-            </Switch>
-          </Layout>
-        </AuthGuard>
+      <Route path="/">
+        <ProtectedPage><Dashboard /></ProtectedPage>
       </Route>
+      <Route path="/kitchen">
+        <ProtectedPage roles={["admin", "manager", "kitchen"]}><KitchenDisplay /></ProtectedPage>
+      </Route>
+      <Route path="/customers/:id">
+        <ProtectedPage><CustomerProfile /></ProtectedPage>
+      </Route>
+      <Route path="/customers">
+        <ProtectedPage><Customers /></ProtectedPage>
+      </Route>
+      <Route path="/reservations">
+        <ProtectedPage><Reservations /></ProtectedPage>
+      </Route>
+      <Route path="/orders/:id">
+        <ProtectedPage><OrderDetail /></ProtectedPage>
+      </Route>
+      <Route path="/orders">
+        <ProtectedPage><Orders /></ProtectedPage>
+      </Route>
+      <Route path="/staff">
+        <ProtectedPage roles={["admin", "manager"]}><Staff /></ProtectedPage>
+      </Route>
+      <Route path="/products">
+        <ProtectedPage roles={["admin", "manager", "staff"]}><Products /></ProtectedPage>
+      </Route>
+      <Route path="/floor-plan">
+        <ProtectedPage roles={["admin", "manager", "staff"]}><FloorPlan /></ProtectedPage>
+      </Route>
+      <Route path="/inventory">
+        <ProtectedPage roles={["admin", "manager", "staff"]}><Inventory /></ProtectedPage>
+      </Route>
+      <Route path="/analytics">
+        <ProtectedPage roles={["admin", "manager"]}><Analytics /></ProtectedPage>
+      </Route>
+      <Route component={NotFound} />
     </Switch>
   );
 }

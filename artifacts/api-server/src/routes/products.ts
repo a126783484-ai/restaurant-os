@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { eq } from "drizzle-orm";
-import { db, productsTable } from "@workspace/db";
+import { db, isDatabaseConfigured, productsTable } from "@workspace/db";
+import { listRuntimeProducts } from "../lib/one-store-runtime";
 import {
   ListProductsQueryParams,
   CreateProductBody,
@@ -18,6 +19,11 @@ router.get("/products", async (req, res): Promise<void> => {
     return;
   }
   const { category } = parsed.data;
+
+  if (!isDatabaseConfigured()) {
+    res.json(listRuntimeProducts(category));
+    return;
+  }
 
   const products = category
     ? await db.select().from(productsTable).where(eq(productsTable.category, category)).orderBy(productsTable.name)

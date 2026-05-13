@@ -1,6 +1,7 @@
 import { Router, type IRouter, type RequestHandler } from "express";
 import { getDatabaseRuntimeStatus, isDatabaseConfigured } from "@workspace/db";
 import { getOpenAIIntegrationStatus } from "@workspace/integrations-openai-ai-server";
+import { requireAuth, requireRole, type AuthRole } from "../middlewares/auth";
 
 const router: IRouter = Router();
 
@@ -25,6 +26,8 @@ type RouteModuleStatus = {
   loading: boolean;
   error: string | null;
   loadedAt: string | null;
+  protected: boolean;
+  roles?: AuthRole[];
 };
 
 type RouteModuleRecord = {
@@ -35,12 +38,15 @@ type RouteModuleRecord = {
   promise?: Promise<IRouter>;
   error: string | null;
   loadedAt: string | null;
+  protected?: boolean;
+  roles?: AuthRole[];
 };
 
 const routeModules: RouteModuleRecord[] = [
   {
     key: "health",
     paths: ["/healthz"],
+    protected: false,
     load: () => import("./health"),
     error: null,
     loadedAt: null,
@@ -48,6 +54,7 @@ const routeModules: RouteModuleRecord[] = [
   {
     key: "auth",
     paths: ["/auth"],
+    protected: false,
     load: () => import("./auth"),
     error: null,
     loadedAt: null,
@@ -55,6 +62,8 @@ const routeModules: RouteModuleRecord[] = [
   {
     key: "customers",
     paths: ["/customers"],
+    protected: true,
+    roles: ["admin", "manager", "staff"],
     load: () => import("./customers"),
     error: null,
     loadedAt: null,
@@ -62,6 +71,8 @@ const routeModules: RouteModuleRecord[] = [
   {
     key: "tables",
     paths: ["/tables"],
+    protected: true,
+    roles: ["admin", "manager", "staff"],
     load: () => import("./tables"),
     error: null,
     loadedAt: null,
@@ -69,6 +80,8 @@ const routeModules: RouteModuleRecord[] = [
   {
     key: "reservations",
     paths: ["/reservations"],
+    protected: true,
+    roles: ["admin", "manager", "staff"],
     load: () => import("./reservations"),
     error: null,
     loadedAt: null,
@@ -76,6 +89,8 @@ const routeModules: RouteModuleRecord[] = [
   {
     key: "products",
     paths: ["/products"],
+    protected: true,
+    roles: ["admin", "manager", "staff"],
     load: () => import("./products"),
     error: null,
     loadedAt: null,
@@ -83,6 +98,8 @@ const routeModules: RouteModuleRecord[] = [
   {
     key: "orders",
     paths: ["/orders"],
+    protected: true,
+    roles: ["admin", "manager", "staff", "kitchen"],
     load: () => import("./orders"),
     error: null,
     loadedAt: null,
@@ -90,6 +107,8 @@ const routeModules: RouteModuleRecord[] = [
   {
     key: "staff",
     paths: ["/staff", "/shifts", "/tasks"],
+    protected: true,
+    roles: ["admin", "manager"],
     load: () => import("./staff"),
     error: null,
     loadedAt: null,
@@ -97,6 +116,8 @@ const routeModules: RouteModuleRecord[] = [
   {
     key: "dashboard",
     paths: ["/dashboard"],
+    protected: true,
+    roles: ["admin", "manager", "staff"],
     load: () => import("./dashboard"),
     error: null,
     loadedAt: null,
@@ -104,6 +125,8 @@ const routeModules: RouteModuleRecord[] = [
   {
     key: "payments",
     paths: ["/payments"],
+    protected: true,
+    roles: ["admin", "manager"],
     load: () => import("./payments"),
     error: null,
     loadedAt: null,
@@ -111,6 +134,8 @@ const routeModules: RouteModuleRecord[] = [
   {
     key: "inventory",
     paths: ["/inventory"],
+    protected: true,
+    roles: ["admin", "manager", "staff"],
     load: () => import("./inventory"),
     error: null,
     loadedAt: null,
@@ -118,6 +143,8 @@ const routeModules: RouteModuleRecord[] = [
   {
     key: "ai",
     paths: ["/ai"],
+    protected: true,
+    roles: ["admin", "manager"],
     load: () => import("./ai"),
     error: null,
     loadedAt: null,
@@ -132,6 +159,8 @@ function getRouteStatus(): RouteModuleStatus[] {
     loading: Boolean(entry.promise && !entry.router),
     error: entry.error,
     loadedAt: entry.loadedAt,
+    protected: Boolean(entry.protected),
+    roles: entry.roles,
   }));
 }
 
@@ -215,6 +244,22 @@ const lazyRouteRecoveryMiddleware: RequestHandler = async (req, res, next) => {
   }
 
   try {
+    if (entry.protected) {
+      await new Promise<void>((resolve, reject) => {
+        requireAuth(req, res, (err?: unknown) => err ? reject(err) : resolve());
+      });
+
+      if (res.headersSent) return;
+
+      if (entry.roles?.length) {
+        await new Promise<void>((resolve, reject) => {
+          requireRole(entry.roles)(req, res, (err?: unknown) => err ? reject(err) : resolve());
+        });
+
+        if (res.headersSent) return;
+      }
+    }
+
     const moduleRouter = await loadRouteModule(entry);
     moduleRouter(req, res, next);
   } catch (err) {

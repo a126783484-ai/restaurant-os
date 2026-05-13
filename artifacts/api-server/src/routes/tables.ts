@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { eq } from "drizzle-orm";
-import { db, tablesTable } from "@workspace/db";
+import { db, isDatabaseConfigured, tablesTable } from "@workspace/db";
+import { listRuntimeTables } from "../lib/one-store-runtime";
 import {
   CreateTableBody,
   UpdateTableParams,
@@ -10,6 +11,11 @@ import {
 const router: IRouter = Router();
 
 router.get("/tables", async (_req, res): Promise<void> => {
+  if (!isDatabaseConfigured()) {
+    res.json(listRuntimeTables());
+    return;
+  }
+
   const tables = await db.select().from(tablesTable).orderBy(tablesTable.number);
   res.json(tables);
 });

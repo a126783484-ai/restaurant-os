@@ -4,6 +4,9 @@ import cookieParser from "cookie-parser";
 import crypto from "node:crypto";
 
 import { logger } from "./lib/logger";
+import { assertJwtSecretConfigured } from "./lib/jwt-secret";
+
+assertJwtSecretConfigured();
 
 const app = express();
 
@@ -78,14 +81,42 @@ const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
 
   res.status(safeStatusCode).json({
     ok: false,
-    error: safeStatusCode >= 500 ? "Internal Server Error" : message,
+    error: {
+      code: safeStatusCode >= 500 ? "INTERNAL_SERVER_ERROR" : "REQUEST_FAILED",
+      message: safeStatusCode >= 500 ? "Internal Server Error" : message,
+    },
     message: process.env.NODE_ENV === "production" && safeStatusCode >= 500 ? undefined : message,
     timestamp: new Date().toISOString(),
   });
 };
 
 app.use(requestContextMiddleware);
-app.use(cors());
+const configuredCorsOrigins = [process.env.CORS_ORIGINS, process.env.FRONTEND_URL]
+  .filter(Boolean)
+  .join(",")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const defaultCorsOrigins = [
+  "https://restaurant-os-restaurant-os-opal.vercel.app",
+];
+
+const allowedCorsOrigins = new Set([...defaultCorsOrigins, ...configuredCorsOrigins]);
+
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || allowedCorsOrigins.has(origin) || process.env.NODE_ENV !== "production") {
+      callback(null, true);
+      return;
+    }
+
+    callback(new Error(`CORS origin not allowed: ${origin}`));
+  },
+  credentials: true,
+  methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Request-Id", "X-Correlation-Id"],
+}));
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
 

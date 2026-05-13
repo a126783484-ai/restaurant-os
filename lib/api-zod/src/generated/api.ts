@@ -364,7 +364,10 @@ export const ListOrdersResponseItem = zod.object({
   status: zod.string(),
   paymentStatus: zod.string(),
   paymentMethod: zod.string().nullish(),
+  paidAmount: zod.number().optional(),
   totalAmount: zod.number(),
+  paymentNote: zod.string().nullish(),
+  paidAt: zod.string().nullish(),
   notes: zod.string().nullish(),
   createdAt: zod.string(),
 });
@@ -378,6 +381,7 @@ export const CreateOrderBody = zod.object({
   tableId: zod.number().optional(),
   type: zod.string(),
   notes: zod.string().optional(),
+  idempotencyKey: zod.string().optional(),
   items: zod.array(
     zod.object({
       productId: zod.number(),
@@ -402,7 +406,10 @@ export const GetOrderResponse = zod.object({
   status: zod.string(),
   paymentStatus: zod.string(),
   paymentMethod: zod.string().nullish(),
+  paidAmount: zod.number().optional(),
   totalAmount: zod.number(),
+  paymentNote: zod.string().nullish(),
+  paidAt: zod.string().nullish(),
   notes: zod.string().nullish(),
   createdAt: zod.string(),
   items: zod.array(
@@ -430,7 +437,19 @@ export const UpdateOrderBody = zod.object({
   status: zod.string().optional(),
   paymentStatus: zod.string().optional(),
   paymentMethod: zod.string().optional(),
-  notes: zod.string().optional(),
+  notes: zod.string().nullish().optional(),
+  paymentNote: zod.string().nullish().optional(),
+  paidAmount: zod.number().optional(),
+  paidAt: zod.string().nullish().optional(),
+  totalAmount: zod.number().optional(),
+  tableId: zod.number().nullish().optional(),
+  items: zod.array(
+    zod.object({
+      productId: zod.number(),
+      quantity: zod.number(),
+      notes: zod.string().nullish().optional(),
+    }),
+  ).optional(),
 });
 
 export const UpdateOrderResponse = zod.object({
@@ -441,7 +460,10 @@ export const UpdateOrderResponse = zod.object({
   status: zod.string(),
   paymentStatus: zod.string(),
   paymentMethod: zod.string().nullish(),
+  paidAmount: zod.number().optional(),
   totalAmount: zod.number(),
+  paymentNote: zod.string().nullish(),
+  paidAt: zod.string().nullish(),
   notes: zod.string().nullish(),
   createdAt: zod.string(),
 });

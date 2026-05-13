@@ -40,19 +40,25 @@ function ActivityBadge({ type }: { type: string }) {
 }
 
 export default function Dashboard() {
-  const { data: summary, isLoading: summaryLoading } = useGetDashboardSummary();
-  const { data: topProducts, isLoading: productsLoading } = useGetTopProducts();
-  const { data: flow, isLoading: flowLoading } = useGetCustomerFlow();
-  const { data: activity, isLoading: activityLoading } = useGetRecentActivity();
+  const { data: summary, isLoading: summaryLoading, error: summaryError } = useGetDashboardSummary();
+  const { data: topProducts, isLoading: productsLoading, error: productsError } = useGetTopProducts();
+  const { data: flow, isLoading: flowLoading, error: flowError } = useGetCustomerFlow();
+  const { data: activity, isLoading: activityLoading, error: activityError } = useGetRecentActivity();
 
   const today = new Date().toLocaleDateString("zh-TW", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto overflow-x-hidden">
       <div>
         <h1 className="text-xl font-bold text-foreground">儀表板</h1>
         <p className="text-sm text-muted-foreground mt-0.5">{today}</p>
       </div>
+
+      {(summaryError || productsError || flowError || activityError) && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+          部分營運資料暫時無法讀取；頁面仍會顯示已取得的資訊。
+        </div>
+      )}
 
       {summaryLoading ? (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -61,7 +67,7 @@ export default function Dashboard() {
           ))}
         </div>
       ) : summary ? (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <KPICard title="今日營業額" value={`$${summary.todaySales.toFixed(2)}`} sub={`本週 $${summary.weekSales.toFixed(2)}`} icon={DollarSign} accent="bg-primary" />
           <KPICard title="今日訂單" value={String(summary.todayOrders)} sub={`${summary.pendingOrders} 筆待處理`} icon={ShoppingBag} />
           <KPICard title="今日顧客" value={String(summary.todayCustomers)} sub="不重複訪客" icon={Users} />
@@ -71,7 +77,14 @@ export default function Dashboard() {
           <KPICard title="本週營收" value={`$${summary.weekSales.toFixed(0)}`} icon={TrendingUp} />
           <KPICard title="系統狀態" value="運作中" sub="即時數據" icon={Activity} />
         </div>
-      ) : null}
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <KPICard title="今日營業額" value="$0.00" sub="資料暫不可用" icon={DollarSign} accent="bg-primary" />
+          <KPICard title="今日訂單" value="0" sub="請稍後重新整理" icon={ShoppingBag} />
+          <KPICard title="進行中訂單" value="0" icon={Clock} />
+          <KPICard title="系統狀態" value="需注意" sub="API 部分失敗" icon={Activity} />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
         <div className="lg:col-span-3 bg-card border border-card-border rounded-xl p-5">
@@ -80,7 +93,7 @@ export default function Dashboard() {
             <div className="h-48 animate-pulse bg-muted rounded-lg" />
           ) : (
             <ResponsiveContainer width="100%" height={200}>
-              <AreaChart data={flow ?? []} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+              <AreaChart data={flowError ? [] : (flow ?? [])} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="flowGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="hsl(15 80% 50%)" stopOpacity={0.25} />
@@ -105,7 +118,7 @@ export default function Dashboard() {
             </div>
           ) : (
             <div className="space-y-2.5">
-              {(topProducts ?? []).slice(0, 6).map((p, i) => (
+              {(productsError ? [] : (topProducts ?? [])).slice(0, 6).map((p, i) => (
                 <div key={p.productId} className="flex items-center gap-3">
                   <span className="text-xs font-bold text-muted-foreground w-4 shrink-0">{i + 1}</span>
                   <div className="flex-1 min-w-0">
@@ -115,7 +128,7 @@ export default function Dashboard() {
                   <span className="text-xs font-semibold text-foreground shrink-0">${p.totalRevenue.toFixed(0)}</span>
                 </div>
               ))}
-              {(!topProducts || topProducts.length === 0) && (
+              {(productsError || !topProducts || topProducts.length === 0) && (
                 <p className="text-sm text-muted-foreground text-center py-8">尚無銷售資料</p>
               )}
             </div>
@@ -143,7 +156,7 @@ export default function Dashboard() {
                 </span>
               </div>
             ))}
-            {(!activity || activity.length === 0) && (
+            {(activityError || !activity || activity.length === 0) && (
               <p className="text-sm text-muted-foreground py-6 text-center">尚無最近動態</p>
             )}
           </div>

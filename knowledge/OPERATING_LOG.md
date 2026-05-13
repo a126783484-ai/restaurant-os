@@ -39,3 +39,20 @@ Remaining launch gates:
 - Vercel production env vars were added for `restaurant-os-api-server`: DATABASE_URL, JWT_SECRET, CORS_ORIGINS, FRONTEND_URL, NODE_ENV.
 - Triggered a new main deployment through this operating log commit so production functions load the new env values.
 - Next validation target: `/health`, `/api/system/status`, auth register/login, database persistence, orders, and KDS.
+
+## 2026-05-13 Production database smoke validation
+
+- `/health` returns public 200 JSON.
+- `/api/system/status` returns public 200 JSON after Vercel protection was disabled.
+- `database.configured=true` and `database.ready=true`.
+- Supabase write-path smoke tests passed in rollback transactions:
+  - orders insert
+  - order_items insert with product/order foreign keys
+  - customer/order/visit dashboard chain
+  - reservations insert
+  - inventory insert
+  - staff insert
+  - shifts insert
+  - tasks insert
+- No smoke-test data was persisted because validation used explicit rollback transactions.
+- Active remaining risks: RLS hardening pending, AI env not configured, NODE_ENV value should be cleaned to plain `production`.

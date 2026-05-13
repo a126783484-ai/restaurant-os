@@ -1,3 +1,3 @@
-export { getOpenAIIntegrationStatus, openai } from "./client";
+export { openai, getOpenAIClient, getOpenAIIntegrationStatus } from "./client";
 export { generateImageBuffer, editImages } from "./image";
 export { batchProcess, batchProcessWithSSE, isRateLimitError, type BatchOptions } from "./batch";

@@ -261,7 +261,7 @@ async function createSession(req: Request, user: AuthUser, token: string, sessio
   await ensureAuthSchema();
   await pool.query(
     `INSERT INTO sessions (id, user_id, token_hash, user_agent, ip_address, expires_at)
-     VALUES ($1, $2, $3, $4, $5, NOW() + ($6::text || ' seconds')::interval)`,
+     VALUES ($1, $2, $3, $4, $5, NOW() + make_interval(secs => $6::int))`,
     [sessionId, user.id, hashToken(token), req.header("user-agent") ?? null, req.ip ?? null, TOKEN_TTL_SECONDS],
   );
 }
@@ -275,7 +275,17 @@ async function revokeSession(sessionId: string | undefined): Promise<void> {
 
 async function issueToken(req: Request, user: AuthUser): Promise<string> {
   const sessionId = crypto.randomUUID();
-  const token = createToken(user, sessionId);
+  let token: string;
+  try {
+    token = createToken(user, sessionId);
+  } catch (error) {
+    throw Object.assign(new Error("JWT secret is not configured correctly."), {
+      statusCode: 500,
+      code: "AUTH_TOKEN_CREATE_FAILED",
+      cause: error,
+    });
+  }
+
   try {
     await createSession(req, user, token, sessionId);
   } catch (error) {
@@ -314,6 +324,77 @@ function validateRegisterBody(body: RegisterBody, res: Response): { name: string
 
   return { name, email, password, role };
 }
+
+router.get("/auth/diagnostics", async (_req, res) => {
+  const checks: Array<{ step: string; ok: boolean; message?: string }> = [];
+  const sampleUser: AuthUser = {
+    id: 999999,
+    name: "Diagnostic User",
+    email: "diagnostic@example.com",
+    role: "admin",
+  };
+
+  try {
+    await bcrypt.hash("diagnostic-password", 4);
+    checks.push({ step: "bcrypt.hash", ok: true });
+  } catch (error) {
+    checks.push({ step: "bcrypt.hash", ok: false, message: error instanceof Error ? error.message : String(error) });
+  }
+
+  try {
+    const token = createToken(sampleUser, crypto.randomUUID());
+    checks.push({ step: "jwt.sign", ok: typeof token === "string" && token.length > 0 });
+  } catch (error) {
+    checks.push({ step: "jwt.sign", ok: false, message: error instanceof Error ? error.message : String(error) });
+  }
+
+  if (isDatabaseConfigured()) {
+    try {
+      await ensureAuthSchema();
+      checks.push({ step: "ensureAuthSchema", ok: true });
+    } catch (error) {
+      checks.push({ step: "ensureAuthSchema", ok: false, message: error instanceof Error ? error.message : String(error) });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const passwordHash = await bcrypt.hash("diagnostic-password", 4);
+      const userResult = await client.query<{ id: number }>(
+        `INSERT INTO users (name, email, password_hash, role, account_type)
+         VALUES ($1, $2, $3, $4, $4)
+         RETURNING id`,
+        ["Diagnostic User", `diagnostic-${Date.now()}@example.com`, passwordHash, "admin"],
+      );
+      checks.push({ step: "users.insert", ok: Boolean(userResult.rows[0]?.id) });
+
+      const token = createToken({ ...sampleUser, id: userResult.rows[0].id }, crypto.randomUUID());
+      await client.query(
+        `INSERT INTO sessions (id, user_id, token_hash, user_agent, ip_address, expires_at)
+         VALUES ($1, $2, $3, $4, $5, NOW() + make_interval(secs => $6::int))`,
+        [crypto.randomUUID(), userResult.rows[0].id, hashToken(token), "diagnostic", "127.0.0.1", TOKEN_TTL_SECONDS],
+      );
+      checks.push({ step: "sessions.insert", ok: true });
+      await client.query("ROLLBACK");
+    } catch (error) {
+      checks.push({ step: "db.rollback-smoke", ok: false, message: error instanceof Error ? error.message : String(error) });
+      await client.query("ROLLBACK").catch(() => undefined);
+    } finally {
+      client.release();
+    }
+  } else {
+    checks.push({ step: "database.configured", ok: false, message: "DATABASE_URL is not configured." });
+  }
+
+  const ok = checks.every((check) => check.ok);
+  res.status(ok ? 200 : 500).json({
+    ok,
+    productionRuntime: isProductionRuntime(),
+    databaseConfigured: isDatabaseConfigured(),
+    checks,
+    timestamp: new Date().toISOString(),
+  });
+});
 
 router.post("/auth/register", async (req, res, next): Promise<void> => {
   const parsed = validateRegisterBody(req.body ?? {}, res);

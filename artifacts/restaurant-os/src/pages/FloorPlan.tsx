@@ -51,18 +51,14 @@ const STATUS_CONFIG: Record<TableStatus, { label: string; bg: string; border: st
 };
 
 const SECTION_LABELS: Record<string, string> = {
-  窗邊: "窗邊區",
+  main: "主廳",
   主廳: "主廳",
+  窗邊: "窗邊區",
   露台: "露台",
   包廂: "包廂",
 };
 
-const SECTIONS = [
-  { key: "窗邊", cols: "grid-cols-2" },
-  { key: "主廳", cols: "grid-cols-3" },
-  { key: "露台", cols: "grid-cols-2" },
-  { key: "包廂", cols: "grid-cols-2" },
-];
+const DEFAULT_SECTION_ORDER = ["main", "主廳", "窗邊", "露台", "包廂"];
 
 const RESERVATION_STATUS_COLORS: Record<string, string> = {
   pending: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
@@ -128,6 +124,21 @@ type OrderType = {
   createdAt: string;
 };
 
+function getSectionLabel(section: string | null | undefined): string {
+  const normalized = section?.trim() || "main";
+  return SECTION_LABELS[normalized] ?? normalized;
+}
+
+function buildSections(tables: TableType[]) {
+  const sectionSet = new Set(tables.map((table) => table.section?.trim() || "main"));
+  const ordered = [
+    ...DEFAULT_SECTION_ORDER.filter((section) => sectionSet.has(section)),
+    ...Array.from(sectionSet).filter((section) => !DEFAULT_SECTION_ORDER.includes(section)),
+  ];
+
+  return ordered.map((section) => ({ key: section, cols: section === "main" || section === "主廳" ? "grid-cols-2" : "grid-cols-2" }));
+}
+
 function TableCard({
   table,
   reservation,
@@ -148,21 +159,21 @@ function TableCard({
       data-testid={`table-card-${table.number}`}
       onClick={onClick}
       className={cn(
-        "relative w-full aspect-square rounded-xl border-2 p-3 flex flex-col items-center justify-center gap-1 transition-all duration-150 cursor-pointer select-none",
+        "relative w-full min-h-32 rounded-xl border-2 p-4 flex flex-col items-center justify-center gap-2 transition-all duration-150 cursor-pointer select-none",
         cfg.bg,
         cfg.border,
         isSelected && "ring-2 ring-primary ring-offset-2 scale-[1.03] shadow-lg"
       )}
     >
-      <span className={cn("absolute top-2 right-2 w-2.5 h-2.5 rounded-full", cfg.dot)} />
-      <span className="text-2xl font-black text-foreground leading-none">{table.number}</span>
-      <span className={cn("text-[10px] font-semibold uppercase tracking-wider", cfg.text)}>
+      <span className={cn("absolute top-3 right-3 w-3 h-3 rounded-full", cfg.dot)} />
+      <span className="text-3xl font-black text-foreground leading-none">{table.number}</span>
+      <span className={cn("text-xs font-semibold uppercase tracking-wider", cfg.text)}>
         {table.capacity} 人
       </span>
       {(reservation || order) && (
         <div className="flex items-center gap-1 mt-1">
-          {reservation && <CalendarDays className="h-3 w-3 text-amber-500" />}
-          {order && <ShoppingBag className="h-3 w-3 text-blue-500" />}
+          {reservation && <CalendarDays className="h-4 w-4 text-amber-500" />}
+          {order && <ShoppingBag className="h-4 w-4 text-blue-500" />}
         </div>
       )}
     </button>
@@ -191,7 +202,7 @@ function DetailPanel({
           <h2 className="text-lg font-bold text-foreground">{table.number} 號桌</h2>
           <div className="flex items-center gap-2 mt-1">
             <span className={cn("text-xs font-semibold", cfg.text)}>{cfg.label}</span>
-            <span className="text-xs text-muted-foreground">&middot; {table.capacity} 人 &middot; {SECTION_LABELS[table.section] ?? table.section}</span>
+            <span className="text-xs text-muted-foreground">&middot; {table.capacity} 人 &middot; {getSectionLabel(table.section)}</span>
           </div>
         </div>
         <button onClick={onClose} className="p-1 rounded-md hover:bg-muted transition-colors text-muted-foreground">
@@ -317,6 +328,8 @@ export default function FloorPlan() {
   const { data: readyOrders } = useListOrders({ status: "ready" });
 
   const updateTable = useUpdateTable();
+  const normalizedTables = (tables ?? []) as TableType[];
+  const sections = buildSections(normalizedTables);
 
   const activeOrders: OrderType[] = [
     ...(pendingOrders ?? []),
@@ -338,7 +351,7 @@ export default function FloorPlan() {
     }
   }
 
-  const selectedTable = tables?.find(t => t.id === selectedTableId) ?? null;
+  const selectedTable = normalizedTables.find(t => t.id === selectedTableId) ?? null;
   const selectedReservation = selectedTableId ? reservationByTable.get(selectedTableId) : undefined;
   const selectedOrder = selectedTableId ? orderByTable.get(selectedTableId) : undefined;
 
@@ -362,7 +375,7 @@ export default function FloorPlan() {
     toast({ title: "樓層平面圖已更新" });
   };
 
-  const counts = (tables ?? []).reduce(
+  const counts = normalizedTables.reduce(
     (acc, t) => {
       acc[t.status as TableStatus] = (acc[t.status as TableStatus] ?? 0) + 1;
       return acc;
@@ -409,24 +422,28 @@ export default function FloorPlan() {
           {tablesLoading ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
               {Array.from({ length: 10 }).map((_, i) => (
-                <div key={i} className="aspect-square bg-muted animate-pulse rounded-xl" />
+                <div key={i} className="min-h-32 bg-muted animate-pulse rounded-xl" />
               ))}
             </div>
+          ) : normalizedTables.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+              尚未建立桌位。請先在資料庫或桌位管理建立桌位資料。
+            </div>
           ) : (
-            <div className="space-y-8 max-w-4xl">
-              {SECTIONS.map(section => {
-                const sectionTables = (tables ?? []).filter(t => t.section === section.key);
+            <div className="space-y-8 max-w-4xl pb-10">
+              {sections.map(section => {
+                const sectionTables = normalizedTables.filter(t => (t.section?.trim() || "main") === section.key);
                 if (sectionTables.length === 0) return null;
                 return (
                   <div key={section.key}>
                     <div className="flex items-center gap-3 mb-3">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-bold text-foreground">{SECTION_LABELS[section.key] ?? section.key}</span>
+                        <span className="text-sm font-bold text-foreground">{getSectionLabel(section.key)}</span>
                         <span className="text-xs text-muted-foreground">（{sectionTables.length} 桌）</span>
                       </div>
                       <div className="flex-1 h-px bg-border" />
                     </div>
-                    <div className={cn("grid gap-3", section.cols, "sm:grid-cols-3 lg:grid-cols-4")}>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                       {sectionTables
                         .sort((a, b) => a.number - b.number)
                         .map(table => (

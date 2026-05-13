@@ -37,6 +37,11 @@ const memoryUsers = new Map<string, StoredUser>();
 let memoryUserId = 1;
 let authSchemaReady: Promise<void> | null = null;
 
+function isProductionRuntime(): boolean {
+  const nodeEnv = process.env.NODE_ENV?.trim().toLowerCase() ?? "";
+  return nodeEnv === "production" || nodeEnv.includes("production");
+}
+
 function sendError(res: Response, status: number, code: string, message: string): void {
   res.status(status).json({
     ok: false,
@@ -109,18 +114,20 @@ function hashToken(token: string): string {
 }
 
 function setTokenCookie(res: Response, token: string): void {
+  const isProd = isProductionRuntime();
   res.cookie("token", token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: isProd,
     maxAge: TOKEN_MAX_AGE_MS,
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    sameSite: isProd ? "none" : "lax",
   });
 }
 
 function clearTokenCookie(res: Response): void {
+  const isProd = isProductionRuntime();
   res.clearCookie("token", {
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    secure: isProd,
+    sameSite: isProd ? "none" : "lax",
   });
 }
 
@@ -240,7 +247,11 @@ async function createUser(input: { name: string; email: string; password: string
     if (error?.code === "23505") {
       throw Object.assign(new Error("Email is already registered."), { statusCode: 409, code: "AUTH_EMAIL_EXISTS" });
     }
-    throw error;
+    throw Object.assign(new Error("Unable to create user account."), {
+      statusCode: 500,
+      code: "AUTH_USER_CREATE_FAILED",
+      cause: error,
+    });
   }
 }
 
@@ -250,7 +261,7 @@ async function createSession(req: Request, user: AuthUser, token: string, sessio
   await ensureAuthSchema();
   await pool.query(
     `INSERT INTO sessions (id, user_id, token_hash, user_agent, ip_address, expires_at)
-     VALUES ($1, $2, $3, $4, $5, NOW() + ($6 || ' seconds')::interval)`,
+     VALUES ($1, $2, $3, $4, $5, NOW() + ($6::text || ' seconds')::interval)`,
     [sessionId, user.id, hashToken(token), req.header("user-agent") ?? null, req.ip ?? null, TOKEN_TTL_SECONDS],
   );
 }
@@ -265,7 +276,15 @@ async function revokeSession(sessionId: string | undefined): Promise<void> {
 async function issueToken(req: Request, user: AuthUser): Promise<string> {
   const sessionId = crypto.randomUUID();
   const token = createToken(user, sessionId);
-  await createSession(req, user, token, sessionId);
+  try {
+    await createSession(req, user, token, sessionId);
+  } catch (error) {
+    throw Object.assign(new Error("User was created, but session creation failed. Please use the login tab."), {
+      statusCode: 202,
+      code: "AUTH_SESSION_CREATE_FAILED",
+      cause: error,
+    });
+  }
   return token;
 }
 
@@ -306,6 +325,10 @@ router.post("/auth/register", async (req, res, next): Promise<void> => {
     const token = await issueToken(req, publicUser);
     sendAuthSuccess(res, token, publicUser);
   } catch (error: any) {
+    if (error?.statusCode === 202) {
+      sendError(res, 202, error.code ?? "AUTH_PARTIAL_SUCCESS", error.message);
+      return;
+    }
     if (error?.statusCode) {
       sendError(res, error.statusCode, error.code ?? "AUTH_REGISTER_FAILED", error.message);
       return;

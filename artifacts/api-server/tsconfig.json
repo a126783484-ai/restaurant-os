@@ -13,7 +13,6 @@
       "@workspace/integrations-openai-ai-server/*": ["../../lib/integrations-openai-ai-server/src/*"]
     },
     "outDir": "dist",
-    "rootDir": "src",
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "strict": false,
@@ -21,5 +20,5 @@
     "noEmit": false,
     "types": ["node"]
   },
-  "include": ["src/**/*", "../../lib/**/*"]
+  "include": ["src/**/*"]
 }

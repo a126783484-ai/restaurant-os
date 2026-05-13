@@ -4,9 +4,6 @@ import cookieParser from "cookie-parser";
 import crypto from "node:crypto";
 
 import { logger } from "./lib/logger";
-import { assertJwtSecretConfigured } from "./lib/jwt-secret";
-
-assertJwtSecretConfigured();
 
 const app = express();
 

@@ -17,8 +17,10 @@ import KitchenDisplay from "@/pages/KitchenDisplay";
 import Inventory from "@/pages/Inventory";
 import Analytics from "@/pages/Analytics";
 import NotFound from "@/pages/not-found";
-import { clearToken, useAuthSession, type AuthRole } from "@/hooks/use-auth";
-import { ApiError } from "@workspace/api-client-react";
+import { clearToken, getToken, useAuthSession, type AuthRole } from "@/hooks/use-auth";
+import { ApiError, setAuthTokenGetter } from "@workspace/api-client-react";
+
+setAuthTokenGetter(() => getToken());
 
 const queryClient = new QueryClient({
   defaultOptions: {

@@ -72,6 +72,191 @@ const VALID_PAYMENT_METHODS = new Set([
 ]);
 let orderSchemaReady: Promise<void> | null = null;
 
+
+type DbOrderRow = Record<string, any>;
+type DbOrderItemRow = Record<string, any>;
+
+type Queryable = { query: (text: string, params?: unknown[]) => Promise<{ rows: any[] }> };
+
+function toIso(value: unknown): string {
+  return value instanceof Date ? value.toISOString() : new Date(String(value)).toISOString();
+}
+
+function nullableIso(value: unknown): string | null {
+  if (!value) return null;
+  return toIso(value);
+}
+
+function roundMoney(value: unknown): number {
+  const amount = Number(value ?? 0);
+  return Number.isFinite(amount) ? Math.round(amount * 100) / 100 : 0;
+}
+
+function mapDbOrderItemRow(row: DbOrderItemRow) {
+  return {
+    id: Number(row.id),
+    orderId: Number(row.order_id),
+    productId: Number(row.product_id),
+    productName: String(row.product_name ?? ""),
+    quantity: Number(row.quantity ?? 0),
+    unitPrice: roundMoney(row.unit_price),
+    subtotal: roundMoney(row.subtotal),
+    notes: row.notes ?? null,
+  };
+}
+
+function mapDbOrderRow(row: DbOrderRow, items: DbOrderItemRow[] = []) {
+  const totalAmount = roundMoney(row.total_amount);
+  const paidAmount = roundMoney(row.paid_amount);
+  return {
+    id: Number(row.id),
+    customerId: row.customer_id == null ? null : Number(row.customer_id),
+    tableId: row.table_id == null ? null : Number(row.table_id),
+    type: String(row.type ?? "dine-in"),
+    status: String(row.status ?? "pending"),
+    paymentStatus: String(row.payment_status ?? "unpaid"),
+    paymentMethod: row.payment_method ?? null,
+    paidAmount,
+    totalAmount,
+    balance: Math.max(roundMoney(totalAmount - paidAmount), 0),
+    paymentCount: row.payment_count == null ? undefined : Number(row.payment_count),
+    paymentNote: row.payment_note ?? null,
+    paidAt: nullableIso(row.paid_at),
+    notes: row.notes ?? null,
+    createdAt: toIso(row.created_at),
+    items: items.map(mapDbOrderItemRow),
+  };
+}
+
+async function listKdsDbOrders() {
+  const orderResult = await pool.query(
+    `SELECT id, customer_id, table_id, type, status, payment_status, payment_method,
+            paid_amount, total_amount, payment_note, paid_at, notes, created_at
+       FROM orders
+      WHERE status = ANY($1::text[])
+      ORDER BY created_at ASC`,
+    [[...KDS_ACTIVE_ORDER_STATUSES]],
+  );
+
+  const orderIds = orderResult.rows.map((row) => Number(row.id));
+  if (!orderIds.length) return [];
+
+  const itemResult = await pool.query(
+    `SELECT id, order_id, product_id, product_name, quantity, unit_price, subtotal, notes, created_at
+       FROM order_items
+      WHERE order_id = ANY($1::int[])
+      ORDER BY created_at ASC, id ASC`,
+    [orderIds],
+  );
+  const itemsByOrderId = new Map<number, DbOrderItemRow[]>();
+  for (const item of itemResult.rows) {
+    const orderId = Number(item.order_id);
+    const current = itemsByOrderId.get(orderId) ?? [];
+    current.push(item);
+    itemsByOrderId.set(orderId, current);
+  }
+
+  return orderResult.rows.map((order) => mapDbOrderRow(order, itemsByOrderId.get(Number(order.id)) ?? []));
+}
+
+async function syncTableAfterTerminalOrderWithClient(client: Queryable, tableId: number | null | undefined) {
+  if (!tableId) return;
+  const active = await client.query(
+    "SELECT COUNT(*)::int AS count FROM orders WHERE table_id = $1 AND type = 'dine-in' AND status = ANY($2::text[])",
+    [tableId, [...ACTIVE_DINE_IN_ORDER_STATUSES]],
+  );
+  if (Number(active.rows[0]?.count ?? 0) === 0) {
+    await client.query("UPDATE tables SET status = 'cleaning', updated_at = now() WHERE id = $1 AND status = 'occupied'", [tableId]);
+  }
+}
+
+async function writeOperationalAuditLog(input: Parameters<typeof writeAuditLog>[0]): Promise<void> {
+  const client = input.client as Queryable | undefined;
+  try {
+    if (client) await client.query("SAVEPOINT order_status_audit");
+    await writeAuditLog(input);
+    if (client) await client.query("RELEASE SAVEPOINT order_status_audit");
+  } catch (error) {
+    if (client) await client.query("ROLLBACK TO SAVEPOINT order_status_audit").catch(() => undefined);
+    console.error("[orders] audit log write failed during status update", {
+      action: input.action,
+      entityId: input.entityId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function updateDbOrderStatusOnly(input: {
+  id: number;
+  status: string;
+  actor: ReturnType<typeof getRequestUser>;
+}) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const existingResult = await client.query(
+      `SELECT id, customer_id, table_id, type, status, payment_status, payment_method, paid_amount,
+              total_amount, payment_note, paid_at, notes, created_at
+         FROM orders
+        WHERE id = $1
+        FOR UPDATE`,
+      [input.id],
+    );
+    const existing = existingResult.rows[0];
+    if (!existing) {
+      throw Object.assign(new Error("Order not found."), { statusCode: 404, code: "ORDER_NOT_FOUND" });
+    }
+
+    assertOrderTransition(existing.status, input.status);
+    if (normalizeOrderStatus(input.status) === "cancelled") {
+      const paidAmount = roundMoney(existing.paid_amount);
+      if (paidAmount > 0 && input.actor?.role !== "admin" && input.actor?.role !== "manager") {
+        throw Object.assign(new Error("Only admin or manager can cancel a paid or partially paid order."), { statusCode: 403, code: "AUTH_FORBIDDEN" });
+      }
+    }
+
+    const updatedResult = await client.query(
+      `UPDATE orders
+          SET status = $1, updated_at = now()
+        WHERE id = $2
+        RETURNING id, customer_id, table_id, type, status, payment_status, payment_method, paid_amount,
+                  total_amount, payment_note, paid_at, notes, created_at`,
+      [input.status, input.id],
+    );
+    const updated = updatedResult.rows[0];
+
+    if (input.status === "cancelled" || input.status === "completed") {
+      await syncTableAfterTerminalOrderWithClient(client, existing.table_id == null ? null : Number(existing.table_id));
+    }
+
+    const itemResult = await client.query(
+      `SELECT id, order_id, product_id, product_name, quantity, unit_price, subtotal, notes, created_at
+         FROM order_items
+        WHERE order_id = $1
+        ORDER BY created_at ASC, id ASC`,
+      [input.id],
+    );
+
+    await writeOperationalAuditLog({
+      actor: input.actor,
+      action: input.status === "completed" ? "order.completed" : input.status === "cancelled" ? "order.cancelled" : "order.status_updated",
+      entityType: "order",
+      entityId: input.id,
+      before: mapDbOrderRow(existing, itemResult.rows),
+      after: mapDbOrderRow(updated, itemResult.rows),
+      client,
+    });
+
+    await client.query("COMMIT");
+    return mapDbOrderRow(updated, itemResult.rows);
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 function sendError(
   res: Response,
   status: number,
@@ -458,13 +643,7 @@ router.get("/orders/kds", async (_req, res, next): Promise<void> => {
   }
 
   try {
-    await ensureOrderSchema();
-    const active = await pool.query<{ id: number }>(
-      "SELECT id FROM orders WHERE status = ANY($1::text[]) ORDER BY created_at ASC",
-      [[...KDS_ACTIVE_ORDER_STATUSES]],
-    );
-    const orders = (await Promise.all(active.rows.map((row) => getDbOrder(Number(row.id)))))
-      .filter((order): order is NonNullable<Awaited<ReturnType<typeof getDbOrder>>> => Boolean(order));
+    const orders = await listKdsDbOrders();
 
     res.json({
       ok: true,
@@ -680,6 +859,17 @@ router.patch("/orders/:id", async (req, res, next): Promise<void> => {
   }
 
   try {
+    const updateKeys = Object.keys(update);
+    if (!items && updateKeys.length === 1 && typeof update.status === "string") {
+      const order = await updateDbOrderStatusOnly({
+        id: params.data.id,
+        status: update.status,
+        actor: getRequestUser(req),
+      });
+      res.json(order);
+      return;
+    }
+
     await ensureOrderSchema();
     const existing = await getDbOrder(params.data.id);
     if (!existing) {

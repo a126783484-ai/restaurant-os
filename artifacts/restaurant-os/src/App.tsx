@@ -13,6 +13,7 @@ import OrderDetail from "@/pages/OrderDetail";
 import Staff from "@/pages/Staff";
 import Products from "@/pages/Products";
 import FloorPlan from "@/pages/FloorPlan";
+import TableManagement from "@/pages/TableManagement";
 import KitchenDisplay from "@/pages/KitchenDisplay";
 import Inventory from "@/pages/Inventory";
 import Analytics from "@/pages/Analytics";
@@ -115,6 +116,9 @@ function Router() {
         <ProtectedPage roles={["admin", "manager", "staff"]}><Products /></ProtectedPage>
       </Route>
       <Route path="/floor-plan">
+        <ProtectedPage roles={["admin", "manager", "staff"]}><TableManagement /></ProtectedPage>
+      </Route>
+      <Route path="/floor-view">
         <ProtectedPage roles={["admin", "manager", "staff"]}><FloorPlan /></ProtectedPage>
       </Route>
       <Route path="/inventory">

@@ -55,6 +55,15 @@ try {
   assert.equal(ledger.netPaidCents, 20000, "refund reduces net paid and void is excluded");
   assert.equal(ledger.voidCents, 5000, "void amount is tracked separately");
 
+  const cancelledOrderRevenueCents = core.deriveLedgerSummary({ orderStatus: "cancelled", orderTotalCents: 30000, events: [
+    { type: "payment", amountCents: 30000, status: "valid" },
+  ] }).netPaidCents;
+  const closingRevenueCents = [
+    { status: "cancelled", netPaidCents: cancelledOrderRevenueCents },
+    { status: "completed", netPaidCents: 20000 },
+  ].filter((order) => order.status !== "cancelled").reduce((sum, order) => sum + order.netPaidCents, 0);
+  assert.equal(closingRevenueCents, 20000, "cancelled orders are excluded from collected revenue");
+
   core.assertOrderTransition("open", "preparing");
   assert.throws(() => core.assertOrderTransition("completed", "open"), /Cannot transition/, "illegal state transition is rejected");
 

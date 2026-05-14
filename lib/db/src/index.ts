@@ -148,6 +148,25 @@ function withTimeout<T>(operation: Promise<T>, label: string, timeoutMs = queryT
     });
 }
 
+
+function patchPoolClient(client: pg.PoolClient): pg.PoolClient {
+  const originalQuery = client.query.bind(client) as pg.PoolClient["query"];
+
+  Object.defineProperty(client, "query", {
+    configurable: true,
+    value: (...args: Parameters<pg.PoolClient["query"]>) => {
+      assertCircuitClosed();
+      const lastArg = args[args.length - 1];
+      if (typeof lastArg === "function") {
+        return originalQuery(...args);
+      }
+      return withTimeout(Promise.resolve(originalQuery(...args) as unknown), "Database transaction query") as unknown;
+    },
+  });
+
+  return client;
+}
+
 function patchPool(poolInstance: pg.Pool): pg.Pool {
   const originalQuery = poolInstance.query.bind(poolInstance) as pg.Pool["query"];
   const originalConnect = poolInstance.connect.bind(poolInstance);
@@ -172,7 +191,9 @@ function patchPool(poolInstance: pg.Pool): pg.Pool {
       if (typeof lastArg === "function") {
         return originalConnect(...args);
       }
-      return withTimeout(Promise.resolve(originalConnect(...args)), "Database connect", connectionTimeoutMillis());
+      const connectPromise = originalConnect(...args) as unknown as Promise<pg.PoolClient>;
+      return withTimeout(Promise.resolve(connectPromise), "Database connect", connectionTimeoutMillis())
+        .then((client) => patchPoolClient(client));
     },
   });
 

@@ -102,9 +102,9 @@ const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
       : typeof err?.statusCode === "number"
         ? err.statusCode
         : 500;
-  const safeStatusCode = statusCode >= 400 && statusCode < 600 ? statusCode : 500;
   const message = err instanceof Error ? err.message : String(err);
   const dbError = isDatabaseUnavailableError(err) || isDatabaseConnectionError(message);
+  const safeStatusCode = dbError ? 503 : statusCode >= 400 && statusCode < 600 ? statusCode : 500;
 
   logger.error(
     {
@@ -154,7 +154,7 @@ app.use(cors({
   },
   credentials: true,
   methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Request-Id", "X-Correlation-Id"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Request-Id", "X-Correlation-Id", "X-Idempotency-Key"],
 }));
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());

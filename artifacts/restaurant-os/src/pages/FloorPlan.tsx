@@ -4,6 +4,7 @@ import {
   useListReservations,
   useListOrders,
   useUpdateTable,
+  useCreateTable,
   getListTablesQueryKey,
   getListReservationsQueryKey,
   getListOrdersQueryKey,
@@ -11,10 +12,12 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
-import { Users, CalendarDays, ShoppingBag, RefreshCw, X } from "lucide-react";
+import { Users, CalendarDays, ShoppingBag, RefreshCw, X, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
 type TableStatus = "available" | "occupied" | "reserved" | "cleaning";
@@ -316,6 +319,11 @@ function DetailPanel({
 
 export default function FloorPlan() {
   const [selectedTableId, setSelectedTableId] = useState<number | null>(null);
+  const [showCreateTable, setShowCreateTable] = useState(false);
+  const [newTableNumber, setNewTableNumber] = useState("");
+  const [newTableCapacity, setNewTableCapacity] = useState("4");
+  const [newTableSection, setNewTableSection] = useState("main");
+  const [newTableNotes, setNewTableNotes] = useState("");
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -328,6 +336,7 @@ export default function FloorPlan() {
   const { data: readyOrders } = useListOrders({ status: "ready" });
 
   const updateTable = useUpdateTable();
+  const createTable = useCreateTable();
   const normalizedTables = (tables ?? []) as TableType[];
   const sections = buildSections(normalizedTables);
 
@@ -354,6 +363,48 @@ export default function FloorPlan() {
   const selectedTable = normalizedTables.find(t => t.id === selectedTableId) ?? null;
   const selectedReservation = selectedTableId ? reservationByTable.get(selectedTableId) : undefined;
   const selectedOrder = selectedTableId ? orderByTable.get(selectedTableId) : undefined;
+
+  const closeCreateTableDialog = () => {
+    setShowCreateTable(false);
+    setNewTableNumber("");
+    setNewTableCapacity("4");
+    setNewTableSection("main");
+    setNewTableNotes("");
+  };
+
+  const onCreateTable = () => {
+    const number = Number(newTableNumber);
+    const capacity = Number(newTableCapacity);
+
+    if (!Number.isInteger(number) || number <= 0) {
+      toast({ title: "桌號必須是正整數", variant: "destructive" });
+      return;
+    }
+
+    if (!Number.isInteger(capacity) || capacity <= 0) {
+      toast({ title: "容納人數必須是正整數", variant: "destructive" });
+      return;
+    }
+
+    createTable.mutate(
+      {
+        data: {
+          number,
+          capacity,
+          section: newTableSection || "main",
+          notes: newTableNotes || undefined,
+        },
+      },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getListTablesQueryKey() });
+          toast({ title: `已新增 ${number} 號桌` });
+          closeCreateTableDialog();
+        },
+        onError: () => toast({ title: "新增桌位失敗，請確認桌號是否重複", variant: "destructive" }),
+      }
+    );
+  };
 
   const onStatusChange = (id: number, status: string) => {
     updateTable.mutate(
@@ -387,14 +438,19 @@ export default function FloorPlan() {
     <div className="flex h-full overflow-hidden">
       <div className={cn("flex-1 flex flex-col overflow-hidden transition-all duration-300")}>
         <div className="px-6 pt-6 pb-4 border-b border-border bg-background/80 backdrop-blur-sm shrink-0">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3">
             <div>
               <h1 className="text-xl font-bold text-foreground">樓層平面圖</h1>
               <p className="text-sm text-muted-foreground mt-0.5">即時桌位狀態 — 點擊桌位查看詳情</p>
             </div>
-            <Button variant="outline" size="sm" onClick={refresh} className="gap-1.5">
-              <RefreshCw className="h-3.5 w-3.5" /> 重新整理
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button data-testid="button-create-table" size="sm" onClick={() => setShowCreateTable(true)} className="gap-1.5">
+                <Plus className="h-3.5 w-3.5" /> 新增桌位
+              </Button>
+              <Button variant="outline" size="sm" onClick={refresh} className="gap-1.5">
+                <RefreshCw className="h-3.5 w-3.5" /> 重新整理
+              </Button>
+            </div>
           </div>
 
           <div className="flex flex-wrap gap-4 mt-4">
@@ -427,7 +483,7 @@ export default function FloorPlan() {
             </div>
           ) : normalizedTables.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-              尚未建立桌位。請先在資料庫或桌位管理建立桌位資料。
+              尚未建立桌位。請按「新增桌位」建立第一張桌。
             </div>
           ) : (
             <div className="space-y-8 max-w-4xl pb-10">
@@ -481,6 +537,48 @@ export default function FloorPlan() {
           />
         )}
       </div>
+
+      <Dialog open={showCreateTable} onOpenChange={(open) => open ? setShowCreateTable(true) : closeCreateTableDialog()}>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>新增桌位</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">桌號</label>
+              <Input data-testid="input-table-number" type="number" min="1" value={newTableNumber} onChange={(event) => setNewTableNumber(event.target.value)} placeholder="例如：5" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">容納人數</label>
+              <Input data-testid="input-table-capacity" type="number" min="1" value={newTableCapacity} onChange={(event) => setNewTableCapacity(event.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">區域</label>
+              <Select value={newTableSection} onValueChange={setNewTableSection}>
+                <SelectTrigger data-testid="select-table-section">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="main">主廳</SelectItem>
+                  <SelectItem value="窗邊">窗邊區</SelectItem>
+                  <SelectItem value="露台">露台</SelectItem>
+                  <SelectItem value="包廂">包廂</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">備註</label>
+              <Input data-testid="input-table-notes" value={newTableNotes} onChange={(event) => setNewTableNotes(event.target.value)} placeholder="可留空" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={closeCreateTableDialog}>取消</Button>
+            <Button data-testid="button-submit-table" type="button" onClick={onCreateTable} disabled={createTable.isPending}>
+              {createTable.isPending ? "新增中…" : "新增桌位"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

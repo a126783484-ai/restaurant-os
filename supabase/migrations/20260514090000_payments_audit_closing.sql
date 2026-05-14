@@ -4,6 +4,7 @@
 -- 1. Fresh databases that never had a payments table.
 -- 2. Older databases that already had the legacy payments columns
 --    payment_status / payment_method / subtotal / actual_paid / payment_time.
+-- 3. Older databases that already had audit_logs(metadata) but no before/after columns.
 --
 -- Do not directly reference legacy columns outside dynamic SQL. PostgreSQL parses column
 -- names before runtime, so fresh databases would fail if those columns do not exist.
@@ -123,11 +124,23 @@ create table if not exists public.audit_logs (
   actor_user_id integer references public.users(id) on delete set null,
   action text not null,
   entity_type text not null,
-  entity_id text not null,
+  entity_id text,
   before jsonb,
   after jsonb,
+  metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
+
+-- Existing production already had audit_logs(metadata) before this sprint. Add the
+-- new columns explicitly so payment-service inserts into before/after do not fail.
+alter table public.audit_logs add column if not exists actor_user_id integer references public.users(id) on delete set null;
+alter table public.audit_logs add column if not exists action text;
+alter table public.audit_logs add column if not exists entity_type text;
+alter table public.audit_logs add column if not exists entity_id text;
+alter table public.audit_logs add column if not exists before jsonb;
+alter table public.audit_logs add column if not exists after jsonb;
+alter table public.audit_logs add column if not exists metadata jsonb not null default '{}'::jsonb;
+alter table public.audit_logs add column if not exists created_at timestamptz not null default now();
 
 create index if not exists idx_audit_logs_entity on public.audit_logs(entity_type, entity_id);
 create index if not exists idx_audit_logs_actor on public.audit_logs(actor_user_id);

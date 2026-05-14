@@ -29,7 +29,7 @@ type AuthResponse = {
   token?: unknown;
   message?: unknown;
   user?: unknown;
-  error?: { message?: unknown } | unknown;
+  error?: { code?: unknown; message?: unknown } | unknown;
 };
 
 function isAuthUser(value: unknown): value is AuthUser {
@@ -56,11 +56,31 @@ function getStoredUser(): AuthUser | null {
 }
 
 function getErrorMessage(data: AuthResponse, fallback: string): string {
-  if (data.error && typeof data.error === "object" && "message" in data.error && typeof data.error.message === "string") {
-    return data.error.message;
+  if (data.error && typeof data.error === "object") {
+    const code = "code" in data.error && typeof data.error.code === "string" ? data.error.code : null;
+    const message = "message" in data.error && typeof data.error.message === "string" ? data.error.message : null;
+    if (code === "AUTH_DATABASE_UNAVAILABLE" || code === "DATABASE_UNAVAILABLE") {
+      return message ?? "資料庫暫時無法連線，請稍後再試。";
+    }
+    if (message) return message;
   }
 
   return typeof data.message === "string" ? data.message : fallback;
+}
+
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs = 12_000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("API 連線逾時，請稍後重試。");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export function getToken(): string | null {
@@ -87,7 +107,7 @@ export function getCurrentUser(): AuthUser | null {
 
 export async function authenticateWithPassword(mode: AuthMode, input: AuthRequest): Promise<AuthUser> {
   const endpoint = mode === "register" ? "/api/auth/register" : "/api/auth/login";
-  const res = await fetch(getApiUrl(endpoint), {
+  const res = await fetchWithTimeout(getApiUrl(endpoint), {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
@@ -118,7 +138,7 @@ export async function validateStoredSession(): Promise<AuthUser> {
     throw new Error("尚未登入。");
   }
 
-  const res = await fetch(getApiUrl("/api/auth/me"), {
+  const res = await fetchWithTimeout(getApiUrl("/api/auth/me"), {
     method: "GET",
     credentials: "include",
     headers: { Authorization: `Bearer ${token}` },
@@ -183,7 +203,7 @@ export function useLogout() {
     const token = getToken();
     clearToken();
     try {
-      await fetch(getApiUrl("/api/auth/logout"), {
+      await fetchWithTimeout(getApiUrl("/api/auth/logout"), {
         method: "POST",
         credentials: "include",
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,

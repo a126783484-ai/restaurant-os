@@ -8,7 +8,8 @@
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "smoke:v3-core": "node ./test/v3-core-smoke.mjs"
+    "smoke:v3-core": "node ./test/v3-core-smoke.mjs",
+    "smoke:db-runtime": "node ./test/db-runtime-smoke.mjs"
   },
   "dependencies": {
     "@workspace/api-zod": "workspace:*",

@@ -9,7 +9,7 @@ Reasons:
 - The repository already routes production traffic through `artifacts/api-server`; `api-v2` is not used as the production runtime.
 - A long-lived host cannot be provisioned from this coding environment because deployment credentials and paid platform setup are outside the repo.
 - A full Supabase serverless-safe rewrite would require authorization policy and secret validation that cannot be proven without deployment secrets.
-- The current `lib/db` client already uses a single pooled connection per instance and short connection timeouts, so V3 centralizes business correctness in `api-server` while preserving explicit `DATABASE_UNAVAILABLE` failures instead of hanging.
+- The current `lib/db` client now uses a single pooled connection per instance, short connection/query timeouts, and a short circuit breaker, so V3 centralizes business correctness in `api-server` while preserving explicit `DATABASE_UNAVAILABLE` failures instead of hanging. See `docs/PRODUCTION_RUNTIME_DB_STABILITY.md` for the blocker analysis and production validation plan.
 
 ## Business logic model
 
@@ -57,5 +57,5 @@ Cancelling a paid or partially paid order requires admin or manager.
 ## Remaining limitations
 
 - The database schema still stores monetary columns as `REAL`; V3 avoids floating point as canonical logic in services but a migration to integer cents remains the next hardening step.
-- This sprint does not provision a new long-lived production host.
+- This sprint does not provision a new long-lived production host; deployed runtime validation remains required before claiming production readiness.
 - Third-party payment gateways, invoices, multi-store tenancy, subscriptions, and AI analytics remain out of P0 scope.

@@ -31,6 +31,7 @@ import { useToast } from "@/hooks/use-toast";
 import { getCurrentUser } from "@/hooks/use-auth";
 import { addOrderPayment, cancelPayment, getOrderPayments, refundPayment, updatePayment, type PaymentMethod } from "@/lib/payments-api";
 import { cn } from "@/lib/utils";
+import { getSafeErrorMessage } from "@/lib/api-errors";
 
 const ORDER_STATUS_LABELS: Record<string, string> = {
   pending: "待處理",
@@ -165,6 +166,8 @@ export default function OrderDetail() {
     data: order,
     isLoading,
     error,
+    refetch,
+    isFetching,
   } = useGetOrder(orderId, {
     query: {
       enabled: Number.isFinite(orderId),
@@ -192,7 +195,7 @@ export default function OrderDetail() {
     onError: (mutationError) =>
       toast({
         title: "付款失敗",
-        description: mutationError instanceof Error ? mutationError.message : "請檢查金額、權限或訂單狀態。",
+        description: getSafeErrorMessage(mutationError, "請檢查金額、權限或訂單狀態。"),
         variant: "destructive",
       }),
   });
@@ -373,11 +376,16 @@ export default function OrderDetail() {
     return (
       <div className="p-6 text-center space-y-3">
         <p className="text-muted-foreground">
-          找不到此訂單，或 API 暫時無法讀取。
+          {error ? getSafeErrorMessage(error, "API 暫時無法讀取此訂單。") : "找不到此訂單。"}
         </p>
-        <Button variant="link" onClick={() => setLocation("/orders")}>
-          返回訂單列表
-        </Button>
+        <div className="flex flex-col justify-center gap-2 sm:flex-row">
+          <Button variant="outline" onClick={() => refetch()} disabled={isFetching}>
+            {isFetching ? "重試中…" : "重試"}
+          </Button>
+          <Button variant="link" onClick={() => setLocation("/orders")}>
+            返回訂單列表
+          </Button>
+        </div>
       </div>
     );
   }

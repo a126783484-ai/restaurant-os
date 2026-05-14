@@ -2,6 +2,7 @@ import express, { type ErrorRequestHandler, type RequestHandler } from "express"
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import crypto from "node:crypto";
+import { isDatabaseUnavailableError } from "@workspace/db";
 
 import { logger } from "./lib/logger";
 
@@ -103,7 +104,7 @@ const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
         : 500;
   const safeStatusCode = statusCode >= 400 && statusCode < 600 ? statusCode : 500;
   const message = err instanceof Error ? err.message : String(err);
-  const dbError = isDatabaseConnectionError(message);
+  const dbError = isDatabaseUnavailableError(err) || isDatabaseConnectionError(message);
 
   logger.error(
     {

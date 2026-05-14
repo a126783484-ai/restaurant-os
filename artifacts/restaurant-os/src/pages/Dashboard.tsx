@@ -33,6 +33,7 @@ import {
   Timer,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getSafeErrorMessage } from "@/lib/api-errors";
 
 function formatCurrency(value: number, fractionDigits = 0) {
   return new Intl.NumberFormat("zh-TW", {
@@ -239,21 +240,26 @@ export default function Dashboard() {
     data: summary,
     isLoading: summaryLoading,
     error: summaryError,
+    refetch: refetchSummary,
+    isFetching: summaryFetching,
   } = useGetDashboardSummary();
   const {
     data: topProducts,
     isLoading: productsLoading,
     error: productsError,
+    refetch: refetchProducts,
   } = useGetTopProducts();
   const {
     data: flow,
     isLoading: flowLoading,
     error: flowError,
+    refetch: refetchFlow,
   } = useGetCustomerFlow();
   const {
     data: activity,
     isLoading: activityLoading,
     error: activityError,
+    refetch: refetchActivity,
   } = useGetRecentActivity();
 
   const today = new Date().toLocaleDateString("zh-TW", {
@@ -263,6 +269,12 @@ export default function Dashboard() {
     day: "numeric",
   });
   const hasError = summaryError || productsError || flowError || activityError;
+  const retryAll = () => {
+    void refetchSummary();
+    void refetchProducts();
+    void refetchFlow();
+    void refetchActivity();
+  };
 
   const pendingOrders = summary?.pendingOrders ?? 0;
   const activeReservations = summary?.activeReservations ?? 0;
@@ -317,9 +329,13 @@ export default function Dashboard() {
       </section>
 
       {hasError && (
-        <div className="rounded-3xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800 shadow-sm dark:bg-amber-950/30 dark:text-amber-200">
-          部分營運資料暫時無法讀取；頁面仍會顯示已取得的資訊。請優先確認 API
-          與登入權限狀態。
+        <div className="flex flex-col gap-3 rounded-3xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800 shadow-sm dark:bg-amber-950/30 dark:text-amber-200 sm:flex-row sm:items-center sm:justify-between">
+          <span>
+            {getSafeErrorMessage(summaryError ?? productsError ?? flowError ?? activityError, "部分營運資料暫時無法讀取；頁面仍會顯示已取得的資訊，資料可能不是最新。")}
+          </span>
+          <button type="button" className="min-h-10 rounded-2xl border border-amber-300 px-4 text-sm font-black" onClick={retryAll} disabled={summaryFetching}>
+            {summaryFetching ? "重試中…" : "重試全部"}
+          </button>
         </div>
       )}
 

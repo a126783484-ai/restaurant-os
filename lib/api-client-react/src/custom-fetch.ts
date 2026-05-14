@@ -158,13 +158,18 @@ function buildErrorMessage(response: Response, data: unknown): string {
 
   const title = getStringField(data, "title");
   const detail = getStringField(data, "detail");
+  const nestedError = data && typeof data === "object" ? (data as { error?: unknown }).error : undefined;
+  const nestedErrorMessage = nestedError && typeof nestedError === "object" ? getStringField(nestedError, "message") : undefined;
+  const nestedErrorCode = nestedError && typeof nestedError === "object" ? getStringField(nestedError, "code") : undefined;
   const message =
+    nestedErrorMessage ??
     getStringField(data, "message") ??
     getStringField(data, "error_description") ??
     getStringField(data, "error");
 
   if (title && detail) return `${prefix}: ${title} — ${detail}`;
   if (detail) return `${prefix}: ${detail}`;
+  if (message && nestedErrorCode) return `${prefix}: ${nestedErrorCode} — ${message}`;
   if (message) return `${prefix}: ${message}`;
   if (title) return `${prefix}: ${title}`;
 
@@ -359,8 +364,23 @@ export async function customFetch<T = unknown>(
   }
 
   const requestInfo = { method, url: resolveUrl(input) };
+  const timeoutMs = Number((globalThis as typeof globalThis & { __RESTAURANT_OS_API_TIMEOUT_MS__?: number }).__RESTAURANT_OS_API_TIMEOUT_MS__ ?? 12_000);
+  const controller = !init.signal && Number.isFinite(timeoutMs) && timeoutMs > 0 ? new AbortController() : null;
+  const timeout = controller
+    ? setTimeout(() => controller.abort(new Error(`API request timed out after ${timeoutMs}ms.`)), timeoutMs)
+    : null;
 
-  const response = await fetch(input, { credentials: "include", ...init, method, headers });
+  let response: Response;
+  try {
+    response = await fetch(input, { credentials: "include", ...init, signal: init.signal ?? controller?.signal, method, headers });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("API request timed out. Please retry.");
+    }
+    throw error;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 
   if (!response.ok) {
     const errorData = await parseErrorBody(response, method);

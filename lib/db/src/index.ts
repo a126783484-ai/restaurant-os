@@ -28,6 +28,11 @@ globalState.__restaurantOsDatabase ??= {
 
 const state = globalState.__restaurantOsDatabase;
 
+function numberFromEnv(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
 function createDatabaseClient(): DatabaseClient {
   if (!databaseUrl) {
     state.initError = "DATABASE_URL is not configured.";
@@ -38,12 +43,18 @@ function createDatabaseClient(): DatabaseClient {
     return state.db;
   }
 
+  // Vercel creates many short-lived serverless instances. A per-instance pool of 3+
+  // can quickly exhaust the Supabase pooler and cause auth/login timeouts. Keep the
+  // default conservative; production can still override via DB_POOL_MAX if needed.
   state.pool = new Pool({
     connectionString: databaseUrl,
-    max: Number(process.env.DB_POOL_MAX ?? 3),
-    idleTimeoutMillis: Number(process.env.DB_IDLE_TIMEOUT_MS ?? 10_000),
-    connectionTimeoutMillis: Number(process.env.DB_CONNECTION_TIMEOUT_MS ?? 10_000),
+    max: numberFromEnv("DB_POOL_MAX", 1),
+    idleTimeoutMillis: numberFromEnv("DB_IDLE_TIMEOUT_MS", 1_000),
+    connectionTimeoutMillis: numberFromEnv("DB_CONNECTION_TIMEOUT_MS", 30_000),
     allowExitOnIdle: true,
+    ssl: databaseUrl.includes("supabase.com") || databaseUrl.includes("pooler.supabase.com")
+      ? { rejectUnauthorized: false }
+      : undefined,
   });
 
   state.pool.on("error", (err) => {
@@ -83,7 +94,9 @@ export function getDatabaseRuntimeStatus() {
   return {
     configured: Boolean(databaseUrl),
     initialized: Boolean(state.db && state.pool),
-    poolMax: Number(process.env.DB_POOL_MAX ?? 3),
+    poolMax: numberFromEnv("DB_POOL_MAX", 1),
+    connectionTimeoutMillis: numberFromEnv("DB_CONNECTION_TIMEOUT_MS", 30_000),
+    idleTimeoutMillis: numberFromEnv("DB_IDLE_TIMEOUT_MS", 1_000),
     initError: state.initError,
   };
 }

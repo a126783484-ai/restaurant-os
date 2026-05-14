@@ -7,6 +7,7 @@ import {
   listRuntimeTables,
   updateRuntimeTable,
 } from "../lib/one-store-runtime";
+import { ACTIVE_DINE_IN_ORDER_STATUSES } from "../lib/order-domain-service";
 import {
   CreateTableBody,
   UpdateTableParams,
@@ -15,7 +16,7 @@ import {
 
 const router: IRouter = Router();
 
-const ACTIVE_ORDER_STATUSES = ["open", "pending", "preparing", "ready"];
+const ACTIVE_ORDER_STATUSES = [...ACTIVE_DINE_IN_ORDER_STATUSES];
 const ACTIVE_RESERVATION_STATUSES = ["pending", "confirmed", "seated"];
 
 function sendError(res: Parameters<Parameters<IRouter["get"]>[1]>[1], status: number, code: string, message: string): void {

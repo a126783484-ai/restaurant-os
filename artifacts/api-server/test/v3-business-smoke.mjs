@@ -17,6 +17,7 @@ try {
     entryPoints: [
       new URL("../src/lib/v3-core.ts", import.meta.url).pathname,
       new URL("../src/lib/diagnostics-service.ts", import.meta.url).pathname,
+      new URL("../src/lib/order-domain-service.ts", import.meta.url).pathname,
     ],
     outdir,
     bundle: true,
@@ -35,6 +36,7 @@ try {
   const require = createRequire(import.meta.url);
   const core = require(path.join(outdir, "v3-core.js"));
   const diagnostics = require(path.join(outdir, "diagnostics-service.js"));
+  const orderDomain = require(path.join(outdir, "order-domain-service.js"));
 
   const snapshot = core.buildOrderItemSnapshot({ productId: 10, productName: "Rice", unitPrice: 80, quantity: 2 });
   assert.equal(snapshot.lineSubtotalCents, 16000, "create order snapshots use integer cents");
@@ -77,6 +79,13 @@ try {
     refundAmount: 0,
   });
   assert.deepEqual(drifts.map((d) => d.code), ["ORDER_TOTAL_DRIFT", "ORDER_PAID_LEDGER_DRIFT"], "drift monitor detects inconsistent totals and paid ledger");
+
+  const kdsColumns = orderDomain.groupKdsOrdersByStatus([
+    { id: 1, status: "pending" },
+    { id: 2, status: "preparing" },
+    { id: 3, status: "cancelled" },
+  ]);
+  assert.deepEqual(kdsColumns.map((column) => [column.status, column.orders.map((order) => order.id)]), [["pending", [1]], ["preparing", [2]], ["ready", []]], "KDS active grouping is owned by backend order domain rules");
 
   const seen = new Map();
   const createWithKey = (key) => {

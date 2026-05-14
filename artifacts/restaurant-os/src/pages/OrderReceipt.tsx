@@ -119,8 +119,8 @@ export default function OrderReceipt() {
     );
   }
 
-  const paidAmount = paymentsQuery.data?.paidAmount ?? order.paidAmount ?? (order.paymentStatus === "paid" ? order.totalAmount : 0);
-  const balance = paymentsQuery.data?.balance ?? Math.max(order.totalAmount - paidAmount, 0);
+  const paidAmount = paymentsQuery.data?.paidAmount ?? order.paidAmount ?? 0;
+  const balance = paymentsQuery.data?.balance ?? order.balance ?? 0;
   const effectivePaymentStatus = paymentsQuery.data?.paymentStatus ?? order.paymentStatus;
 
   return (
@@ -213,9 +213,7 @@ export default function OrderReceipt() {
           <section className="border-b border-border py-5">
             <div className="space-y-3">
               {order.items?.length ? (
-                order.items.map((item) => {
-                  const subtotal = item.unitPrice * item.quantity;
-                  return (
+                order.items.map((item) => (
                     <div
                       key={item.id}
                       className="flex items-start justify-between gap-4"
@@ -234,11 +232,10 @@ export default function OrderReceipt() {
                         )}
                       </div>
                       <p className="shrink-0 font-black text-foreground">
-                        {formatMoney(subtotal)}
+                        {formatMoney(item.subtotal)}
                       </p>
                     </div>
-                  );
-                })
+                ))
               ) : (
                 <p className="text-sm text-muted-foreground">
                   此訂單尚無品項資料。

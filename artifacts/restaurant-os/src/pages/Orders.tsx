@@ -198,7 +198,7 @@ export default function Orders() {
           order.paymentStatus === "paid" && order.status !== "cancelled",
       );
     if (statusFilter === "with_balance")
-      return list.filter((order) => Math.max(order.totalAmount - (order.paidAmount ?? 0), 0) > 0 && order.status !== "cancelled");
+      return list.filter((order) => (order.balance ?? 0) > 0 && order.status !== "cancelled");
     if (statusFilter === "active")
       return list.filter((order) =>
         ["pending", "preparing", "ready"].includes(order.status),
@@ -434,10 +434,8 @@ export default function Orders() {
           </div>
         ) : displayedOrders.length > 0 ? (
           displayedOrders.map((order) => {
-            const paidAmount =
-              order.paidAmount ??
-              (order.paymentStatus === "paid" ? order.totalAmount : 0);
-            const balance = Math.max(order.totalAmount - paidAmount, 0);
+            const paidAmount = order.paidAmount ?? 0;
+            const balance = order.balance ?? 0;
             return (
               <div
                 key={order.id}
@@ -536,10 +534,8 @@ export default function Orders() {
           ))
         ) : displayedOrders.length > 0 ? (
           displayedOrders.map((order) => {
-            const paidAmount =
-              order.paidAmount ??
-              (order.paymentStatus === "paid" ? order.totalAmount : 0);
-            const balance = Math.max(order.totalAmount - paidAmount, 0);
+            const paidAmount = order.paidAmount ?? 0;
+            const balance = order.balance ?? 0;
             return (
               <article
                 key={order.id}

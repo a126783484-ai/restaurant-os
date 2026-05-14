@@ -1,13 +1,12 @@
 import { useEffect, useState } from "react";
 import {
-  useListOrders,
-  useGetOrder,
   useUpdateOrder,
   getGetDashboardSummaryQueryKey,
   getGetOrderQueryKey,
   getListOrdersQueryKey,
+  type OrderDetail,
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
@@ -20,6 +19,8 @@ import {
   Utensils,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { getKdsBoard } from "@/lib/kds-api";
+import { getSafeErrorMessage } from "@/lib/api-errors";
 
 const STATUS_NEXT: Record<string, string> = {
   pending: "preparing",
@@ -100,17 +101,14 @@ function ElapsedTime({ createdAt }: { createdAt: string }) {
 }
 
 function KDSCard({
-  orderId,
+  order,
   onAdvance,
 }: {
-  orderId: number;
+  order: OrderDetail;
   onAdvance: () => void;
 }) {
-  const { data: order } = useGetOrder(orderId);
   const updateOrder = useUpdateOrder();
   const queryClient = useQueryClient();
-
-  if (!order) return null;
   const cfg = STATUS_COLORS[order.status];
   if (!cfg) return null;
 
@@ -124,7 +122,9 @@ function KDSCard({
       { id: order.id, data: { status: next } },
       {
         onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getListOrdersQueryKey() });
+          queryClient.invalidateQueries({ queryKey: ["kds-board"] });
+          queryClient.invalidateQueries({ queryKey: ["kds-board"] });
+      queryClient.invalidateQueries({ queryKey: getListOrdersQueryKey() });
           queryClient.invalidateQueries({
             queryKey: getGetOrderQueryKey(order.id),
           });
@@ -226,13 +226,13 @@ function Column({
   title,
   subtitle,
   badge,
-  orderIds,
+  orders,
   onAdvance,
 }: {
   title: string;
   subtitle: string;
   badge: string;
-  orderIds: number[];
+  orders: OrderDetail[];
   onAdvance: () => void;
 }) {
   return (
@@ -251,12 +251,12 @@ function Column({
               badge,
             )}
           >
-            {orderIds.length}
+            {orders.length}
           </span>
         </div>
       </div>
       <div className="flex flex-col gap-3">
-        {orderIds.length === 0 ? (
+        {orders.length === 0 ? (
           <div className="rounded-[1.75rem] border-2 border-dashed border-border bg-card/60 p-8 text-center shadow-sm">
             <CheckCircle2 className="mx-auto h-8 w-8 text-emerald-500" />
             <p className="mt-2 text-sm font-bold text-foreground">目前清空</p>
@@ -265,8 +265,8 @@ function Column({
             </p>
           </div>
         ) : (
-          orderIds.map((id) => (
-            <KDSCard key={id} orderId={id} onAdvance={onAdvance} />
+          orders.map((order) => (
+            <KDSCard key={order.id} order={order} onAdvance={onAdvance} />
           ))
         )}
       </div>
@@ -277,24 +277,19 @@ function Column({
 export default function KitchenDisplay() {
   const queryClient = useQueryClient();
   const {
-    data: pending,
-    isLoading: pendingLoading,
-    error: pendingError,
-  } = useListOrders({ status: "pending" });
-  const {
-    data: preparing,
-    isLoading: preparingLoading,
-    error: preparingError,
-  } = useListOrders({ status: "preparing" });
-  const {
-    data: ready,
-    isLoading: readyLoading,
-    error: readyError,
-  } = useListOrders({ status: "ready" });
+    data: board,
+    isLoading: loading,
+    error,
+    refetch,
+  } = useQuery({
+    queryKey: ["kds-board"],
+    queryFn: getKdsBoard,
+  });
   const [lastRefresh, setLastRefresh] = useState(new Date());
 
   useEffect(() => {
     const id = setInterval(() => {
+      queryClient.invalidateQueries({ queryKey: ["kds-board"] });
       queryClient.invalidateQueries({ queryKey: getListOrdersQueryKey() });
       queryClient.invalidateQueries({
         queryKey: getGetDashboardSummaryQueryKey(),
@@ -305,6 +300,8 @@ export default function KitchenDisplay() {
   }, [queryClient]);
 
   const refresh = () => {
+    refetch();
+    queryClient.invalidateQueries({ queryKey: ["kds-board"] });
     queryClient.invalidateQueries({ queryKey: getListOrdersQueryKey() });
     queryClient.invalidateQueries({
       queryKey: getGetDashboardSummaryQueryKey(),
@@ -312,12 +309,10 @@ export default function KitchenDisplay() {
     setLastRefresh(new Date());
   };
 
-  const pendingIds = (pending ?? []).map((o) => o.id);
-  const preparingIds = (preparing ?? []).map((o) => o.id);
-  const readyIds = (ready ?? []).map((o) => o.id);
-  const total = pendingIds.length + preparingIds.length + readyIds.length;
-  const loading = pendingLoading || preparingLoading || readyLoading;
-  const error = pendingError || preparingError || readyError;
+  const pendingOrders = board?.columns.find((column) => column.status === "pending")?.orders ?? [];
+  const preparingOrders = board?.columns.find((column) => column.status === "preparing")?.orders ?? [];
+  const readyOrders = board?.columns.find((column) => column.status === "ready")?.orders ?? [];
+  const total = board?.total ?? 0;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -362,7 +357,7 @@ export default function KitchenDisplay() {
           {error && (
             <div className="mb-4 rounded-3xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-bold text-destructive">
               <AlertTriangle className="mr-2 inline h-4 w-4" /> KDS
-              暫時無法讀取訂單，請重新整理。
+              {getSafeErrorMessage(error, "KDS 暫時無法讀取訂單，請重新整理。")}
             </div>
           )}
           {loading ? (
@@ -390,21 +385,21 @@ export default function KitchenDisplay() {
                 title="待處理"
                 subtitle="新進訂單，等待開始製作"
                 badge="bg-amber-500"
-                orderIds={pendingIds}
+                orders={pendingOrders}
                 onAdvance={refresh}
               />
               <Column
                 title="製作中"
                 subtitle="廚房正在處理"
                 badge="bg-blue-500"
-                orderIds={preparingIds}
+                orders={preparingOrders}
                 onAdvance={refresh}
               />
               <Column
                 title="可出餐"
                 subtitle="等待送餐或取餐"
                 badge="bg-emerald-500"
-                orderIds={readyIds}
+                orders={readyOrders}
                 onAdvance={refresh}
               />
             </div>

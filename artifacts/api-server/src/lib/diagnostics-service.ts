@@ -1,6 +1,7 @@
 import { pool } from "@workspace/db";
 import { centsToAmount, toCents } from "./v3-core";
 import { ensurePaymentSchema } from "./payment-service";
+import { ACTIVE_DINE_IN_ORDER_STATUSES } from "./order-domain-service";
 
 export type ConsistencyDrift = {
   code: string;
@@ -116,7 +117,7 @@ export async function getConsistencyReport(): Promise<ConsistencyReport> {
      LEFT JOIN orders o ON o.table_id = t.id AND o.type = 'dine-in' AND o.status = ANY($1::text[])
      GROUP BY t.id
      ORDER BY t.id`,
-    [["pending", "preparing", "ready"]],
+    [[...ACTIVE_DINE_IN_ORDER_STATUSES]],
   );
 
   for (const row of tableRows.rows) {

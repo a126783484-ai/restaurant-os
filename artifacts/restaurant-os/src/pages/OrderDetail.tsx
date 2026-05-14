@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -99,11 +99,6 @@ function formatMoney(value: number) {
   }).format(value);
 }
 
-function derivePaymentStatus(paidAmount: number, totalAmount: number) {
-  if (paidAmount <= 0) return "unpaid";
-  if (paidAmount < totalAmount) return "partially_paid";
-  return "paid";
-}
 
 function AmountTile({
   label,
@@ -153,7 +148,6 @@ export default function OrderDetail() {
   const [editableItems, setEditableItems] = useState<EditableItem[]>([]);
   const [orderNotes, setOrderNotes] = useState("");
   const [paymentNote, setPaymentNote] = useState("");
-  const [paidAmount, setPaidAmount] = useState("0");
   const [newPaymentAmount, setNewPaymentAmount] = useState("");
   const [newPaymentMethod, setNewPaymentMethod] = useState<PaymentMethod>("cash");
   const [newPaymentNote, setNewPaymentNote] = useState("");
@@ -230,37 +224,19 @@ export default function OrderDetail() {
     );
     setOrderNotes(order.notes ?? "");
     setPaymentNote(order.paymentNote ?? "");
-    setPaidAmount(
-      String(
-        order.paidAmount ??
-          (order.paymentStatus === "paid" ? order.totalAmount : 0),
-      ),
-    );
   }, [order]);
 
-  useEffect(() => {
-    if (paymentsQuery.data) {
-      setNewPaymentAmount(String(paymentsQuery.data.balance || ""));
-    }
-  }, [paymentsQuery.data?.balance]);
-
-  const currentPaidAmount = Number(paidAmount) || 0;
   const paymentSummary = paymentsQuery.data;
   const paidAmountFromLedger = paymentSummary?.paidAmount ?? order?.paidAmount ?? 0;
   const effectivePaymentStatus = paymentSummary?.paymentStatus ?? order?.paymentStatus ?? "unpaid";
-  const balance = order ? paymentSummary?.balance ?? Math.max(order.totalAmount - paidAmountFromLedger, 0) : 0;
-  const draftPaymentStatus = order ? derivePaymentStatus(currentPaidAmount, order.totalAmount) : "unpaid";
-  const draftBalance = order
-    ? Math.max(order.totalAmount - Math.max(currentPaidAmount, 0), 0)
-    : 0;
-  const editedTotal = useMemo(
-    () =>
-      editableItems.reduce(
-        (sum, item) => sum + item.unitPrice * item.quantity,
-        0,
-      ),
-    [editableItems],
-  );
+  const balance = paymentSummary?.balance ?? order?.balance ?? 0;
+
+  useEffect(() => {
+    const trustedBalance = paymentsQuery.data?.balance ?? order?.balance;
+    if (trustedBalance !== undefined) {
+      setNewPaymentAmount(String(trustedBalance || ""));
+    }
+  }, [order?.balance, paymentsQuery.data?.balance]);
 
   const refreshQueries = () => {
     queryClient.invalidateQueries({ queryKey: getGetOrderQueryKey(orderId) });
@@ -298,7 +274,6 @@ export default function OrderDetail() {
               {
                 ...item,
                 quantity,
-                subtotal: Math.round(item.unitPrice * quantity * 100) / 100,
               },
             ]
           : [];
@@ -352,7 +327,7 @@ export default function OrderDetail() {
       ? "此訂單已有付款紀錄，取消訂單不會刪除付款。確定取消？"
       : "確定取消此訂單？";
     if (!window.confirm(message)) return;
-    update({ status: "cancelled", paymentStatus: "cancelled", paidAt: null }, "訂單已取消，不會列入 Dashboard / 日結營收");
+    update({ status: "cancelled", paidAt: null }, "訂單已取消，不會列入 Dashboard / 日結營收");
   };
 
   if (isLoading) {
@@ -465,7 +440,7 @@ export default function OrderDetail() {
         />
         <AmountTile
           label="已收 paidAmount"
-          value={formatMoney(order.paidAmount ?? 0)}
+          value={formatMoney(paidAmountFromLedger)}
           tone="success"
         />
         <AmountTile
@@ -495,7 +470,7 @@ export default function OrderDetail() {
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <label className="text-xs font-black uppercase tracking-wider text-muted-foreground">訂單狀態</label>
-              <Select value={order.status} onValueChange={(value) => update({ status: value, paymentStatus: value === "cancelled" ? "cancelled" : undefined })} disabled={updateOrder.isPending}>
+              <Select value={order.status} onValueChange={(value) => update({ status: value })} disabled={updateOrder.isPending}>
                 <SelectTrigger data-testid="select-update-status" className="min-h-12 rounded-2xl"><SelectValue /></SelectTrigger>
                 <SelectContent>{Object.entries(ORDER_STATUS_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
               </Select>
@@ -611,8 +586,7 @@ export default function OrderDetail() {
                       {item.productName}
                     </p>
                     <p className="mt-0.5 text-xs text-muted-foreground">
-                      {formatMoney(item.unitPrice)} / 份 · 小計{" "}
-                      {formatMoney(item.unitPrice * item.quantity)}
+                      {formatMoney(item.unitPrice)} / 份 · 後端儲存後重算小計
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
@@ -674,13 +648,8 @@ export default function OrderDetail() {
               placeholder="特殊需求…"
             />
           </div>
-          <div className="mt-4 flex items-center justify-between border-t border-border pt-4">
-            <span className="text-sm font-black text-foreground">
-              畫面試算合計
-            </span>
-            <span className="text-2xl font-black text-foreground">
-              {formatMoney(editedTotal)}
-            </span>
+          <div className="mt-4 rounded-2xl border border-border bg-muted/30 p-3 text-xs font-bold text-muted-foreground">
+            儲存後，後端會重新讀取商品快照、重算訂單合計與付款餘額；此頁不自行決定最終金額。
           </div>
         </div>
       </section>

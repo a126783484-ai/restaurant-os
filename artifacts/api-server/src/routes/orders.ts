@@ -33,6 +33,11 @@ import {
   updateRuntimeOrder,
 } from "../lib/one-store-runtime";
 import {
+  ACTIVE_DINE_IN_ORDER_STATUSES,
+  KDS_ACTIVE_ORDER_STATUSES,
+  groupKdsOrdersByStatus,
+} from "../lib/order-domain-service";
+import {
   assertOrderTransition,
   buildOrderItemSnapshot,
   centsToAmount,
@@ -381,7 +386,7 @@ async function syncTableAfterTerminalOrder(tableId: number | null | undefined) {
   if (!tableId) return;
   const active = await pool.query<{ count: string }>(
     "SELECT COUNT(*)::int AS count FROM orders WHERE table_id = $1 AND type = 'dine-in' AND status = ANY($2::text[])",
-    [tableId, ["pending", "preparing", "ready"]],
+    [tableId, [...ACTIVE_DINE_IN_ORDER_STATUSES]],
   );
   if (Number(active.rows[0]?.count ?? 0) === 0) {
     await pool.query("UPDATE tables SET status = 'cleaning', updated_at = now() WHERE id = $1 AND status = 'occupied'", [tableId]);
@@ -426,16 +431,49 @@ router.get("/orders", async (req, res, next): Promise<void> => {
             .orderBy(sql`${ordersTable.createdAt} DESC`);
 
     const enrichedOrders = await Promise.all(
-      orders.map(async (order) => {
-        try {
-          const summary = await calculateOrderPaymentSummary(order.id);
-          return { ...order, ...summary };
-        } catch {
-          return { ...order, balance: Math.max(order.totalAmount - (order.paidAmount ?? 0), 0), paymentCount: 0 };
-        }
-      }),
+      orders.map(async (order) => ({
+        ...order,
+        ...(await calculateOrderPaymentSummary(order.id)),
+      })),
     );
     res.json(enrichedOrders);
+  } catch (error) {
+    next(error);
+  }
+});
+
+
+router.get("/orders/kds", async (_req, res, next): Promise<void> => {
+  if (!isDatabaseConfigured()) {
+    const orders = KDS_ACTIVE_ORDER_STATUSES.flatMap((status) => listRuntimeOrders({ status }));
+    res.json({
+      ok: true,
+      sourceOfTruth: "backend-order-domain",
+      activeStatuses: KDS_ACTIVE_ORDER_STATUSES,
+      total: orders.length,
+      columns: groupKdsOrdersByStatus(orders),
+      generatedAt: new Date().toISOString(),
+    });
+    return;
+  }
+
+  try {
+    await ensureOrderSchema();
+    const active = await pool.query<{ id: number }>(
+      "SELECT id FROM orders WHERE status = ANY($1::text[]) ORDER BY created_at ASC",
+      [[...KDS_ACTIVE_ORDER_STATUSES]],
+    );
+    const orders = (await Promise.all(active.rows.map((row) => getDbOrder(Number(row.id)))))
+      .filter((order): order is NonNullable<Awaited<ReturnType<typeof getDbOrder>>> => Boolean(order));
+
+    res.json({
+      ok: true,
+      sourceOfTruth: "backend-order-domain",
+      activeStatuses: KDS_ACTIVE_ORDER_STATUSES,
+      total: orders.length,
+      columns: groupKdsOrdersByStatus(orders),
+      generatedAt: new Date().toISOString(),
+    });
   } catch (error) {
     next(error);
   }
@@ -510,12 +548,8 @@ async function getDbOrder(id: number) {
     .select()
     .from(orderItemsTable)
     .where(eq(orderItemsTable.orderId, order.id));
-  try {
-    const paymentSummary = await calculateOrderPaymentSummary(order.id);
-    return { ...order, ...paymentSummary, items };
-  } catch {
-    return { ...order, balance: Math.max(order.totalAmount - (order.paidAmount ?? 0), 0), paymentCount: 0, items };
-  }
+  const paymentSummary = await calculateOrderPaymentSummary(order.id);
+  return { ...order, ...paymentSummary, items };
 }
 
 

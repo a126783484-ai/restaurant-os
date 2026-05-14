@@ -8,6 +8,19 @@
 
 export interface DashboardSummary {
   todaySales: number;
+  todayReceivable?: number;
+  todayCollected?: number;
+  todayOutstanding?: number;
+  cashTotal?: number;
+  cardTotal?: number;
+  transferTotal?: number;
+  externalTotal?: number;
+  refundedTotal?: number;
+  cancelledPaymentTotal?: number;
+  unpaidOrders?: number;
+  partiallyPaidOrders?: number;
+  paidOrders?: number;
+  hasOutstandingOrders?: number;
   todayOrders: number;
   todayCustomers: number;
   repeatCustomerRate: number;

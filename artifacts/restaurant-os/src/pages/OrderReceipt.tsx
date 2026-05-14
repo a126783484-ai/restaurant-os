@@ -1,9 +1,11 @@
+import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
 import { useGetOrder, getGetOrderQueryKey } from "@workspace/api-client-react";
 import { ArrowLeft, Printer, ReceiptText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { getOrderPayments } from "@/lib/payments-api";
 
 const ORDER_STATUS_LABELS: Record<string, string> = {
   pending: "待處理",
@@ -84,6 +86,11 @@ export default function OrderReceipt() {
       queryKey: getGetOrderQueryKey(orderId),
     },
   });
+  const paymentsQuery = useQuery({
+    queryKey: ["order-payments", orderId],
+    queryFn: () => getOrderPayments(orderId),
+    enabled: Number.isFinite(orderId),
+  });
 
   if (isLoading) {
     return (
@@ -104,10 +111,9 @@ export default function OrderReceipt() {
     );
   }
 
-  const paidAmount =
-    order.paidAmount ??
-    (order.paymentStatus === "paid" ? order.totalAmount : 0);
-  const balance = Math.max(order.totalAmount - paidAmount, 0);
+  const paidAmount = paymentsQuery.data?.paidAmount ?? order.paidAmount ?? (order.paymentStatus === "paid" ? order.totalAmount : 0);
+  const balance = paymentsQuery.data?.balance ?? Math.max(order.totalAmount - paidAmount, 0);
+  const effectivePaymentStatus = paymentsQuery.data?.paymentStatus ?? order.paymentStatus;
 
   return (
     <div className="min-h-full bg-muted/30 p-4 sm:p-6 print:bg-white print:p-0">
@@ -182,7 +188,7 @@ export default function OrderReceipt() {
                     "bg-muted text-muted-foreground",
                 )}
               >
-                {PAY_STATUS_LABELS[order.paymentStatus] ?? order.paymentStatus}
+                {PAY_STATUS_LABELS[effectivePaymentStatus] ?? effectivePaymentStatus}
               </Badge>
             </div>
           </section>
@@ -222,6 +228,30 @@ export default function OrderReceipt() {
                 </p>
               )}
             </div>
+          </section>
+
+
+          <section className="space-y-3 border-b border-border py-5">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-black text-foreground">付款紀錄</h2>
+              <span className="text-xs font-bold text-muted-foreground">{paymentsQuery.data?.paymentCount ?? 0} 筆</span>
+            </div>
+            {paymentsQuery.isLoading ? (
+              <p className="text-sm text-muted-foreground">正在載入付款紀錄…</p>
+            ) : paymentsQuery.data?.payments.length ? (
+              paymentsQuery.data.payments.map((payment) => (
+                <div key={payment.id} className="rounded-2xl border border-border p-3 text-sm print:border-gray-300">
+                  <div className="flex justify-between gap-3">
+                    <span className="font-black">{formatMoney(payment.amount)} · {PAY_METHOD_LABELS[payment.method]}</span>
+                    <span className="font-bold">{payment.status === "paid" ? "有效" : payment.status === "refunded" ? "已退款" : "已取消"}</span>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">{formatDate(payment.createdAt)}{payment.createdByName ? ` · ${payment.createdByName}` : ""}</p>
+                  {(payment.note || payment.externalReference) && <p className="mt-1 text-xs text-muted-foreground">{payment.note}{payment.externalReference ? ` · ${payment.externalReference}` : ""}</p>}
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-muted-foreground">尚無付款紀錄。</p>
+            )}
           </section>
 
           <section className="space-y-2 border-b border-border py-5">

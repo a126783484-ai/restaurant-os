@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useGetOrder,
   useUpdateOrder,
@@ -28,6 +28,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { getCurrentUser } from "@/hooks/use-auth";
+import { addOrderPayment, cancelPayment, getOrderPayments, refundPayment, updatePayment, type PaymentMethod } from "@/lib/payments-api";
 import { cn } from "@/lib/utils";
 
 const ORDER_STATUS_LABELS: Record<string, string> = {
@@ -151,6 +153,13 @@ export default function OrderDetail() {
   const [orderNotes, setOrderNotes] = useState("");
   const [paymentNote, setPaymentNote] = useState("");
   const [paidAmount, setPaidAmount] = useState("0");
+  const [newPaymentAmount, setNewPaymentAmount] = useState("");
+  const [newPaymentMethod, setNewPaymentMethod] = useState<PaymentMethod>("cash");
+  const [newPaymentNote, setNewPaymentNote] = useState("");
+  const [newPaymentReference, setNewPaymentReference] = useState("");
+  const [editingPaymentId, setEditingPaymentId] = useState<number | null>(null);
+  const [editPaymentNote, setEditPaymentNote] = useState("");
+  const [editPaymentReference, setEditPaymentReference] = useState("");
 
   const {
     data: order,
@@ -162,7 +171,47 @@ export default function OrderDetail() {
       queryKey: getGetOrderQueryKey(orderId),
     },
   });
+  const paymentsQuery = useQuery({
+    queryKey: ["order-payments", orderId],
+    queryFn: () => getOrderPayments(orderId),
+    enabled: Number.isFinite(orderId),
+  });
   const updateOrder = useUpdateOrder();
+  const currentUser = getCurrentUser();
+  const canManagePayment = currentUser?.role === "admin" || currentUser?.role === "manager";
+  const paymentMutation = useMutation({
+    mutationFn: (payload: { amount: number; method: PaymentMethod; note?: string; externalReference?: string }) =>
+      addOrderPayment(orderId, payload),
+    onSuccess: () => {
+      setNewPaymentNote("");
+      setNewPaymentReference("");
+      refreshQueries();
+      paymentsQuery.refetch();
+      toast({ title: "付款已入帳，訂單付款狀態已重算" });
+    },
+    onError: (mutationError) =>
+      toast({
+        title: "付款失敗",
+        description: mutationError instanceof Error ? mutationError.message : "請檢查金額、權限或訂單狀態。",
+        variant: "destructive",
+      }),
+  });
+  const refundMutation = useMutation({
+    mutationFn: refundPayment,
+    onSuccess: () => { refreshQueries(); paymentsQuery.refetch(); toast({ title: "付款已標記退款，金額已重算" }); },
+    onError: (mutationError) => toast({ title: "退款失敗", description: mutationError instanceof Error ? mutationError.message : "請確認權限。", variant: "destructive" }),
+  });
+  const cancelPaymentMutation = useMutation({
+    mutationFn: cancelPayment,
+    onSuccess: () => { refreshQueries(); paymentsQuery.refetch(); toast({ title: "付款已取消，金額已重算" }); },
+    onError: (mutationError) => toast({ title: "取消付款失敗", description: mutationError instanceof Error ? mutationError.message : "請確認權限。", variant: "destructive" }),
+  });
+  const editPaymentMutation = useMutation({
+    mutationFn: (payload: { id: number; note?: string | null; externalReference?: string | null }) =>
+      updatePayment(payload.id, { note: payload.note, externalReference: payload.externalReference }),
+    onSuccess: () => { setEditingPaymentId(null); paymentsQuery.refetch(); toast({ title: "付款備註已更新" }); },
+    onError: (mutationError) => toast({ title: "更新付款備註失敗", description: mutationError instanceof Error ? mutationError.message : "請確認權限。", variant: "destructive" }),
+  });
 
   useEffect(() => {
     if (!order) return;
@@ -186,13 +235,18 @@ export default function OrderDetail() {
     );
   }, [order]);
 
+  useEffect(() => {
+    if (paymentsQuery.data) {
+      setNewPaymentAmount(String(paymentsQuery.data.balance || ""));
+    }
+  }, [paymentsQuery.data?.balance]);
+
   const currentPaidAmount = Number(paidAmount) || 0;
-  const balance = order
-    ? Math.max(order.totalAmount - (order.paidAmount ?? 0), 0)
-    : 0;
-  const draftPaymentStatus = order
-    ? derivePaymentStatus(currentPaidAmount, order.totalAmount)
-    : "unpaid";
+  const paymentSummary = paymentsQuery.data;
+  const paidAmountFromLedger = paymentSummary?.paidAmount ?? order?.paidAmount ?? 0;
+  const effectivePaymentStatus = paymentSummary?.paymentStatus ?? order?.paymentStatus ?? "unpaid";
+  const balance = order ? paymentSummary?.balance ?? Math.max(order.totalAmount - paidAmountFromLedger, 0) : 0;
+  const draftPaymentStatus = order ? derivePaymentStatus(currentPaidAmount, order.totalAmount) : "unpaid";
   const draftBalance = order
     ? Math.max(order.totalAmount - Math.max(currentPaidAmount, 0), 0)
     : 0;
@@ -272,19 +326,30 @@ export default function OrderDetail() {
   };
 
   const savePayment = () => {
-    const amount = Number(paidAmount);
-    if (!Number.isFinite(amount) || amount < 0) {
-      toast({ title: "已收金額必須是 0 以上的數字", variant: "destructive" });
+    update({ paymentNote: paymentNote || null }, "付款備註已更新");
+  };
+
+  const submitPayment = (method = newPaymentMethod, amountOverride?: number) => {
+    const amount = amountOverride ?? Number(newPaymentAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast({ title: "付款金額必須大於 0", variant: "destructive" });
       return;
     }
-    update(
-      {
-        paidAmount: amount,
-        paymentStatus: derivePaymentStatus(amount, order?.totalAmount ?? 0),
-        paymentNote: paymentNote || null,
-      },
-      "付款資訊已更新",
-    );
+    paymentMutation.mutate({
+      amount,
+      method,
+      note: newPaymentNote || undefined,
+      externalReference: newPaymentReference || undefined,
+    });
+  };
+
+  const cancelOrder = () => {
+    const hasPayments = (paymentSummary?.paymentCount ?? order?.paymentCount ?? 0) > 0;
+    const message = hasPayments
+      ? "此訂單已有付款紀錄，取消訂單不會刪除付款。確定取消？"
+      : "確定取消此訂單？";
+    if (!window.confirm(message)) return;
+    update({ status: "cancelled", paymentStatus: "cancelled", paidAt: null }, "訂單已取消，不會列入 Dashboard / 日結營收");
   };
 
   if (isLoading) {
@@ -407,195 +472,102 @@ export default function OrderDetail() {
           <div className="mb-4 flex items-center gap-2">
             <Wallet className="h-5 w-5 text-primary" />
             <div>
-              <h2 className="font-black text-foreground">手動收款</h2>
-              <p className="text-xs text-muted-foreground">
-                輸入已收金額後，系統自動判斷未付款 / 部分付款 / 已付款。
-              </p>
+              <h2 className="font-black text-foreground">付款紀錄結帳台</h2>
+              <p className="text-xs text-muted-foreground">新增每一筆付款，後端會依有效付款紀錄重算已收、餘額與付款狀態。</p>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <label className="text-xs font-black uppercase tracking-wider text-muted-foreground">
-                訂單狀態
-              </label>
-              <Select
-                value={order.status}
-                onValueChange={(value) =>
-                  update({
-                    status: value,
-                    paymentStatus:
-                      value === "cancelled" ? "cancelled" : undefined,
-                  })
-                }
-                disabled={updateOrder.isPending}
-              >
-                <SelectTrigger
-                  data-testid="select-update-status"
-                  className="min-h-12 rounded-2xl"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.entries(ORDER_STATUS_LABELS).map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-black uppercase tracking-wider text-muted-foreground">
-                付款狀態
-              </label>
-              <Select
-                value={order.paymentStatus}
-                onValueChange={(value) =>
-                  update({
-                    paymentStatus: value,
-                    paidAmount:
-                      value === "paid"
-                        ? order.totalAmount
-                        : value === "unpaid"
-                          ? 0
-                          : Number(paidAmount) || 0,
-                  })
-                }
-                disabled={updateOrder.isPending}
-              >
-                <SelectTrigger
-                  data-testid="select-payment-status"
-                  className="min-h-12 rounded-2xl"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.entries(PAY_STATUS_LABELS).map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-black uppercase tracking-wider text-muted-foreground">
-                付款方式
-              </label>
-              <Select
-                value={order.paymentMethod ?? "unpaid"}
-                onValueChange={(value) => update({ paymentMethod: value })}
-                disabled={updateOrder.isPending}
-              >
-                <SelectTrigger
-                  data-testid="select-payment-method"
-                  className="min-h-12 rounded-2xl"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.entries(PAY_METHOD_LABELS).map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-black uppercase tracking-wider text-muted-foreground">
-                已收金額
-              </label>
-              <Input
-                data-testid="input-paid-amount"
-                className="min-h-12 rounded-2xl text-lg font-black"
-                type="number"
-                min="0"
-                step="1"
-                value={paidAmount}
-                onChange={(event) => setPaidAmount(event.target.value)}
-                onBlur={savePayment}
-              />
-            </div>
+          <div className="grid grid-cols-2 gap-3 rounded-3xl border border-border bg-muted/30 p-3 sm:grid-cols-4">
+            <div><p className="text-[11px] font-black text-muted-foreground">合計</p><p className="text-lg font-black">{formatMoney(order.totalAmount)}</p></div>
+            <div><p className="text-[11px] font-black text-muted-foreground">有效已收</p><p className="text-lg font-black text-emerald-600">{formatMoney(paidAmountFromLedger)}</p></div>
+            <div><p className="text-[11px] font-black text-muted-foreground">餘額</p><p className={cn("text-lg font-black", balance > 0 ? "text-red-600" : "text-emerald-600")}>{formatMoney(balance)}</p></div>
+            <div><p className="text-[11px] font-black text-muted-foreground">狀態</p><p className="text-sm font-black">{PAY_STATUS_LABELS[effectivePaymentStatus] ?? effectivePaymentStatus}</p></div>
           </div>
 
-          <div className="mt-3 rounded-3xl border border-border bg-muted/40 p-4">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">輸入後付款狀態</span>
-              <span className="font-black text-foreground">
-                {PAY_STATUS_LABELS[draftPaymentStatus]}
-              </span>
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-black uppercase tracking-wider text-muted-foreground">訂單狀態</label>
+              <Select value={order.status} onValueChange={(value) => update({ status: value, paymentStatus: value === "cancelled" ? "cancelled" : undefined })} disabled={updateOrder.isPending}>
+                <SelectTrigger data-testid="select-update-status" className="min-h-12 rounded-2xl"><SelectValue /></SelectTrigger>
+                <SelectContent>{Object.entries(ORDER_STATUS_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
+              </Select>
             </div>
-            <div className="mt-2 flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">輸入後餘額</span>
-              <span
-                className={cn(
-                  "font-black",
-                  draftBalance > 0 ? "text-red-600" : "text-emerald-600",
-                )}
-              >
-                {formatMoney(draftBalance)}
-              </span>
+            <div className="space-y-1.5">
+              <label className="text-xs font-black uppercase tracking-wider text-muted-foreground">新增付款金額</label>
+              <Input data-testid="input-payment-amount" className="min-h-12 rounded-2xl text-lg font-black" type="number" min="1" step="1" value={newPaymentAmount} onChange={(event) => setNewPaymentAmount(event.target.value)} disabled={order.status === "cancelled"} />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-black uppercase tracking-wider text-muted-foreground">付款方式</label>
+              <Select value={newPaymentMethod} onValueChange={(value) => setNewPaymentMethod(value as PaymentMethod)} disabled={order.status === "cancelled"}>
+                <SelectTrigger className="min-h-12 rounded-2xl"><SelectValue /></SelectTrigger>
+                <SelectContent>{Object.entries(PAY_METHOD_LABELS).filter(([value]) => value !== "unpaid").map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-black uppercase tracking-wider text-muted-foreground">外部單號 / 末五碼</label>
+              <Input className="min-h-12 rounded-2xl" value={newPaymentReference} onChange={(event) => setNewPaymentReference(event.target.value)} placeholder="可留空" />
             </div>
           </div>
 
           <div className="mt-3 space-y-1.5">
-            <label className="text-xs font-black uppercase tracking-wider text-muted-foreground">
-              付款備註
-            </label>
-            <Input
-              data-testid="input-payment-note"
-              className="min-h-12 rounded-2xl"
-              value={paymentNote}
-              onChange={(event) => setPaymentNote(event.target.value)}
-              onBlur={savePayment}
-              placeholder="例：轉帳後五碼 / 外部支付單號 / 刷卡授權碼"
-            />
+            <label className="text-xs font-black uppercase tracking-wider text-muted-foreground">付款備註</label>
+            <Input data-testid="input-payment-note" className="min-h-12 rounded-2xl" value={newPaymentNote} onChange={(event) => setNewPaymentNote(event.target.value)} placeholder="例：客人先付訂金 / 分開付款" />
           </div>
 
+          <Button data-testid="button-add-payment" className="mt-3 min-h-14 w-full rounded-2xl text-base font-black" onClick={() => submitPayment()} disabled={paymentMutation.isPending || order.status === "cancelled"}>
+            {paymentMutation.isPending ? "入帳中…" : "新增付款紀錄"}
+          </Button>
+
           <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {[
-              { method: "cash", label: "現金已收" },
-              { method: "card", label: "刷卡已收" },
-              { method: "transfer", label: "轉帳已收" },
-              { method: "external", label: "外部支付已收" },
-            ].map(({ method, label }) => (
-              <Button
-                key={method}
-                data-testid={`button-pay-${method}`}
-                variant="outline"
-                className="min-h-14 rounded-2xl gap-1.5 font-black"
-                onClick={() =>
-                  update({
-                    paymentStatus: "paid",
-                    paymentMethod: method,
-                    paidAmount: order.totalAmount,
-                  })
-                }
-                disabled={updateOrder.isPending}
-              >
-                <CreditCard className="h-4 w-4" /> {label}
+            {(["cash", "card", "transfer", "external"] as PaymentMethod[]).map((method) => (
+              <Button key={method} data-testid={`button-pay-${method}`} variant="outline" className="min-h-14 rounded-2xl gap-1.5 font-black" onClick={() => submitPayment(method, balance)} disabled={paymentMutation.isPending || order.status === "cancelled" || balance <= 0}>
+                <CreditCard className="h-4 w-4" /> {PAY_METHOD_LABELS[method]}收餘額
               </Button>
             ))}
           </div>
 
-          <Button
-            data-testid="button-cancel-order"
-            variant="outline"
-            className="mt-4 min-h-12 w-full rounded-2xl gap-2 border-red-500/30 font-black text-destructive hover:text-destructive"
-            onClick={() =>
-              update(
-                {
-                  status: "cancelled",
-                  paymentStatus: "cancelled",
-                  paidAt: null,
-                },
-                "訂單已取消，不會列入 Dashboard 營收",
-              )
-            }
-            disabled={updateOrder.isPending || order.status === "cancelled"}
-          >
+          <div className="mt-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-black text-foreground">付款紀錄</h3>
+              <Badge variant="outline" className="rounded-full">{paymentSummary?.paymentCount ?? 0} 筆</Badge>
+            </div>
+            {paymentsQuery.isLoading ? (
+              <div className="h-24 animate-pulse rounded-3xl bg-muted" />
+            ) : (paymentSummary?.payments?.length ?? 0) === 0 ? (
+              <div className="rounded-3xl border border-dashed border-border p-5 text-center text-sm font-bold text-muted-foreground">尚無付款紀錄，請新增付款後再結帳。</div>
+            ) : (
+              <div className="space-y-2">
+                {paymentSummary?.payments.map((payment) => (
+                  <div key={payment.id} className="rounded-3xl border border-border bg-background/60 p-3">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <p className="text-lg font-black text-foreground">{formatMoney(payment.amount)} <span className="text-xs text-muted-foreground">{PAY_METHOD_LABELS[payment.method]}</span></p>
+                        <p className="text-xs text-muted-foreground">{new Date(payment.createdAt).toLocaleString("zh-TW")} · {payment.createdByName ?? (payment.createdBy ? `User #${payment.createdBy}` : "未記錄操作人")}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{payment.note || "無備註"}{payment.externalReference ? ` · ${payment.externalReference}` : ""}</p>
+                      </div>
+                      <Badge className={cn("w-fit border-0", payment.status === "paid" ? "bg-emerald-100 text-emerald-700" : payment.status === "refunded" ? "bg-purple-100 text-purple-700" : "bg-muted text-muted-foreground")}>{payment.status === "paid" ? "有效" : payment.status === "refunded" ? "已退款" : "已取消"}</Badge>
+                    </div>
+                    {editingPaymentId === payment.id ? (
+                      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <Input className="min-h-11 rounded-2xl" value={editPaymentNote} onChange={(event) => setEditPaymentNote(event.target.value)} placeholder="備註" />
+                        <Input className="min-h-11 rounded-2xl" value={editPaymentReference} onChange={(event) => setEditPaymentReference(event.target.value)} placeholder="外部單號" />
+                        <Button className="rounded-2xl" onClick={() => editPaymentMutation.mutate({ id: payment.id, note: editPaymentNote || null, externalReference: editPaymentReference || null })}>儲存</Button>
+                        <Button variant="outline" className="rounded-2xl" onClick={() => setEditingPaymentId(null)}>取消</Button>
+                      </div>
+                    ) : (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {canManagePayment && <Button size="sm" variant="outline" className="rounded-xl" onClick={() => { setEditingPaymentId(payment.id); setEditPaymentNote(payment.note ?? ""); setEditPaymentReference(payment.externalReference ?? ""); }}>編輯備註</Button>}
+                        {canManagePayment && payment.status === "paid" && <Button size="sm" variant="outline" className="rounded-xl text-purple-700" onClick={() => window.confirm("確定退款此付款？") && refundMutation.mutate(payment.id)}>退款</Button>}
+                        {canManagePayment && payment.status === "paid" && <Button size="sm" variant="outline" className="rounded-xl text-red-700" onClick={() => window.confirm("確定取消此付款紀錄？") && cancelPaymentMutation.mutate(payment.id)}>取消付款</Button>}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <Button data-testid="button-cancel-order" variant="outline" className="mt-4 min-h-12 w-full rounded-2xl gap-2 border-red-500/30 font-black text-destructive hover:text-destructive" onClick={cancelOrder} disabled={updateOrder.isPending || order.status === "cancelled"}>
             <XCircle className="h-4 w-4" /> 取消訂單
           </Button>
         </div>

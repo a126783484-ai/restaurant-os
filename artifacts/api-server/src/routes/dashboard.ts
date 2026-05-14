@@ -16,6 +16,7 @@ import {
   getRuntimeRecentActivity,
   getRuntimeTopProducts,
 } from "../lib/one-store-runtime";
+import { getPaymentSummary } from "../lib/payment-service";
 
 const router: IRouter = Router();
 
@@ -54,83 +55,66 @@ function collectedAmount(order: {
   return 0;
 }
 
-router.get("/dashboard/summary", async (_req, res): Promise<void> => {
+router.get("/dashboard/summary", async (_req, res, next): Promise<void> => {
   if (!isDatabaseConfigured()) {
     res.json(getRuntimeDashboardSummary());
     return;
   }
 
-  const today = startOfDay();
-  const week = sevenDaysAgo();
+  try {
+    const today = startOfDay();
+    const week = sevenDaysAgo();
+    const paymentSummary = await getPaymentSummary({ from: today.toISOString(), to: new Date().toISOString() });
+    const weekSummary = await getPaymentSummary({ from: week.toISOString(), to: new Date().toISOString() });
 
-  const todayOrders = await db
-    .select()
-    .from(ordersTable)
-    .where(gte(ordersTable.createdAt, today));
-  const activeTodayOrders = todayOrders.filter(isActiveOrder);
-  const todayReceivable = activeTodayOrders.reduce(
-    (sum, order) => sum + order.totalAmount,
-    0,
-  );
-  const todayCollected = activeTodayOrders.reduce(
-    (sum, order) => sum + collectedAmount(order),
-    0,
-  );
-  const todayOutstanding = Math.max(todayReceivable - todayCollected, 0);
+    const todayVisits = await db
+      .select()
+      .from(visitsTable)
+      .where(gte(visitsTable.visitedAt, today));
+    const customerIds = new Set(todayVisits.map((visit) => visit.customerId));
+    const activeTodayOrders = paymentSummary.unpaidOrderList.concat(paymentSummary.partiallyPaidOrderList, paymentSummary.paidOrderList);
+    for (const order of activeTodayOrders) {
+      // Customer ids are not part of the payment summary; visits remain the source of truth for known customers.
+      void order;
+    }
 
-  const weekOrders = await db
-    .select()
-    .from(ordersTable)
-    .where(gte(ordersTable.createdAt, week));
-  const weekSales = weekOrders
-    .filter(isActiveOrder)
-    .reduce((sum, order) => sum + collectedAmount(order), 0);
+    const allCustomers = await db.select().from(customersTable);
+    const repeatCustomers = allCustomers.filter((customer) => customer.visitCount > 1).length;
+    const repeatCustomerRate = allCustomers.length > 0 ? (repeatCustomers / allCustomers.length) * 100 : 0;
+    const pendingOrders = await db
+      .select()
+      .from(ordersTable)
+      .where(eq(ordersTable.status, "pending"));
+    const activeReservations = await db
+      .select()
+      .from(reservationsTable)
+      .where(sql`${reservationsTable.status} IN ('pending', 'confirmed', 'seated')`);
 
-  const todayVisits = await db
-    .select()
-    .from(visitsTable)
-    .where(gte(visitsTable.visitedAt, today));
-  const customerIds = new Set(todayVisits.map((visit) => visit.customerId));
-  const visitOrderIds = new Set(
-    todayVisits.map((visit) => visit.orderId).filter(Boolean),
-  );
-
-  let orderFallbackCustomers = 0;
-  for (const order of activeTodayOrders) {
-    if (order.customerId) customerIds.add(order.customerId);
-    if (!order.customerId && !visitOrderIds.has(order.id))
-      orderFallbackCustomers += 1;
+    res.json({
+      todaySales: roundMoney(paymentSummary.totalCollected),
+      todayReceivable: roundMoney(paymentSummary.totalReceivable),
+      todayCollected: roundMoney(paymentSummary.totalCollected),
+      todayOutstanding: roundMoney(paymentSummary.totalOutstanding),
+      cashTotal: paymentSummary.cashTotal,
+      cardTotal: paymentSummary.cardTotal,
+      transferTotal: paymentSummary.transferTotal,
+      externalTotal: paymentSummary.externalTotal,
+      refundedTotal: paymentSummary.refundedTotal,
+      cancelledPaymentTotal: paymentSummary.cancelledPaymentTotal,
+      unpaidOrders: paymentSummary.unpaidOrders,
+      partiallyPaidOrders: paymentSummary.partiallyPaidOrders,
+      paidOrders: paymentSummary.paidOrders,
+      hasOutstandingOrders: paymentSummary.unpaidOrders + paymentSummary.partiallyPaidOrders,
+      todayOrders: paymentSummary.orderCount,
+      todayCustomers: customerIds.size,
+      repeatCustomerRate: Math.round(repeatCustomerRate * 10) / 10,
+      pendingOrders: pendingOrders.length,
+      activeReservations: activeReservations.length,
+      weekSales: roundMoney(weekSummary.totalCollected),
+    });
+  } catch (error) {
+    next(error);
   }
-
-  const allCustomers = await db.select().from(customersTable);
-  const repeatCustomers = allCustomers.filter(
-    (customer) => customer.visitCount > 1,
-  ).length;
-  const repeatCustomerRate =
-    allCustomers.length > 0 ? (repeatCustomers / allCustomers.length) * 100 : 0;
-  const pendingOrders = await db
-    .select()
-    .from(ordersTable)
-    .where(eq(ordersTable.status, "pending"));
-  const activeReservations = await db
-    .select()
-    .from(reservationsTable)
-    .where(
-      sql`${reservationsTable.status} IN ('pending', 'confirmed', 'seated')`,
-    );
-
-  res.json({
-    todaySales: roundMoney(todayCollected),
-    todayReceivable: roundMoney(todayReceivable),
-    todayCollected: roundMoney(todayCollected),
-    todayOutstanding: roundMoney(todayOutstanding),
-    todayOrders: activeTodayOrders.length,
-    todayCustomers: customerIds.size + orderFallbackCustomers,
-    repeatCustomerRate: Math.round(repeatCustomerRate * 10) / 10,
-    pendingOrders: pendingOrders.length,
-    activeReservations: activeReservations.length,
-    weekSales: roundMoney(weekSales),
-  });
 });
 
 router.get("/dashboard/top-products", async (_req, res): Promise<void> => {

@@ -18,6 +18,7 @@ import TableManagement from "@/pages/TableManagement";
 import KitchenDisplay from "@/pages/KitchenDisplay";
 import Inventory from "@/pages/Inventory";
 import Analytics from "@/pages/Analytics";
+import Closing from "@/pages/Closing";
 import NotFound from "@/pages/not-found";
 import { clearToken, getToken, useAuthSession, type AuthRole } from "@/hooks/use-auth";
 import { ApiError, setAuthTokenGetter } from "@workspace/api-client-react";
@@ -127,6 +128,9 @@ function Router() {
       </Route>
       <Route path="/inventory">
         <ProtectedPage roles={["admin", "manager", "staff"]}><Inventory /></ProtectedPage>
+      </Route>
+      <Route path="/closing">
+        <ProtectedPage roles={["admin", "manager"]}><Closing /></ProtectedPage>
       </Route>
       <Route path="/analytics">
         <ProtectedPage roles={["admin", "manager"]}><Analytics /></ProtectedPage>

@@ -17,6 +17,16 @@ import {
   UpdateOrderParams,
   UpdateOrderBody,
 } from "@workspace/api-zod";
+import { getRequestUser } from "../middlewares/auth";
+import {
+  addPayment,
+  canAddPayment,
+  calculateOrderPaymentSummary,
+  getOrderPaymentBundle,
+  syncOrderPaymentSummary,
+  writeAuditLog,
+  type PaymentMethod,
+} from "../lib/payment-service";
 import {
   createRuntimeOrder,
   getRuntimeOrder,
@@ -277,7 +287,17 @@ router.get("/orders", async (req, res, next): Promise<void> => {
             .from(ordersTable)
             .orderBy(sql`${ordersTable.createdAt} DESC`);
 
-    res.json(orders);
+    const enrichedOrders = await Promise.all(
+      orders.map(async (order) => {
+        try {
+          const summary = await calculateOrderPaymentSummary(order.id);
+          return { ...order, ...summary };
+        } catch {
+          return { ...order, balance: Math.max(order.totalAmount - (order.paidAmount ?? 0), 0), paymentCount: 0 };
+        }
+      }),
+    );
+    res.json(enrichedOrders);
   } catch (error) {
     next(error);
   }
@@ -395,8 +415,83 @@ async function getDbOrder(id: number) {
     .select()
     .from(orderItemsTable)
     .where(eq(orderItemsTable.orderId, order.id));
-  return { ...order, items };
+  try {
+    const paymentSummary = await calculateOrderPaymentSummary(order.id);
+    return { ...order, ...paymentSummary, items };
+  } catch {
+    return { ...order, balance: Math.max(order.totalAmount - (order.paidAmount ?? 0), 0), paymentCount: 0, items };
+  }
 }
+
+
+router.get("/orders/:id/payments", async (req, res, next): Promise<void> => {
+  const params = GetOrderParams.safeParse(req.params);
+  if (!params.success) {
+    sendError(res, 400, "ORDER_ID_INVALID", params.error.message);
+    return;
+  }
+  if (!isDatabaseConfigured()) {
+    sendError(res, 503, "DATABASE_REQUIRED", "Payment records require DATABASE_URL.");
+    return;
+  }
+  try {
+    await ensureOrderSchema();
+    const order = await getDbOrder(params.data.id);
+    if (!order) {
+      sendError(res, 404, "ORDER_NOT_FOUND", "Order not found.");
+      return;
+    }
+    res.json(await getOrderPaymentBundle(params.data.id));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/orders/:id/payments", async (req, res, next): Promise<void> => {
+  const user = getRequestUser(req);
+  if (!canAddPayment(user?.role)) {
+    sendError(res, 403, "AUTH_FORBIDDEN", "You do not have permission to add payments.");
+    return;
+  }
+  const params = GetOrderParams.safeParse(req.params);
+  if (!params.success) {
+    sendError(res, 400, "ORDER_ID_INVALID", params.error.message);
+    return;
+  }
+  const amount = Number(req.body?.amount);
+  const method = String(req.body?.method ?? "") as PaymentMethod;
+  if (!Number.isFinite(amount) || amount <= 0) {
+    sendError(res, 400, "PAYMENT_AMOUNT_INVALID", "Payment amount must be greater than 0.");
+    return;
+  }
+  if (!["cash", "card", "transfer", "external"].includes(method)) {
+    sendError(res, 400, "PAYMENT_METHOD_INVALID", "Payment method must be cash, card, transfer, or external.");
+    return;
+  }
+  if (!isDatabaseConfigured()) {
+    sendError(res, 503, "DATABASE_REQUIRED", "Payment records require DATABASE_URL.");
+    return;
+  }
+  try {
+    await ensureOrderSchema();
+    const result = await addPayment({
+      orderId: params.data.id,
+      amount,
+      method,
+      note: typeof req.body?.note === "string" ? req.body.note : null,
+      externalReference: typeof req.body?.externalReference === "string" ? req.body.externalReference : null,
+      actor: user,
+    });
+    const order = await getDbOrder(params.data.id);
+    res.status(201).json({ ...result, order });
+  } catch (error: any) {
+    if (error?.statusCode) {
+      sendError(res, error.statusCode, "PAYMENT_CREATE_FAILED", error.message);
+      return;
+    }
+    next(error);
+  }
+});
 
 router.get("/orders/:id", async (req, res, next): Promise<void> => {
   const params = GetOrderParams.safeParse(req.params);
@@ -503,11 +598,26 @@ router.patch("/orders/:id", async (req, res, next): Promise<void> => {
       update.paidAt = null;
     }
 
+    const beforeAudit = { ...existing };
     const [order] = await db
       .update(ordersTable)
       .set(update)
       .where(eq(ordersTable.id, params.data.id))
       .returning();
+
+    if (items || typeof update.paidAmount === "number" || update.paymentStatus || update.paymentMethod) {
+      await syncOrderPaymentSummary(order.id, getRequestUser(req));
+    }
+    if (items || update.status === "cancelled") {
+      await writeAuditLog({
+        actor: getRequestUser(req),
+        action: items ? "order.items_updated" : "order.cancelled",
+        entityType: "order",
+        entityId: order.id,
+        before: beforeAudit,
+        after: await getDbOrder(order.id),
+      });
+    }
     res.json(await getDbOrder(order.id));
   } catch (error: any) {
     if (error?.statusCode) {

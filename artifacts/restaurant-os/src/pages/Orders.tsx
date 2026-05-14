@@ -174,6 +174,10 @@ export default function Orders() {
   const displayedOrders = useMemo(() => {
     const list = orders ?? [];
     if (statusFilter === "all") return list;
+    if (statusFilter === "today") {
+      const today = new Date().toDateString();
+      return list.filter((order) => new Date(order.createdAt).toDateString() === today);
+    }
     if (statusFilter === "unpaid")
       return list.filter(
         (order) =>
@@ -190,6 +194,8 @@ export default function Orders() {
         (order) =>
           order.paymentStatus === "paid" && order.status !== "cancelled",
       );
+    if (statusFilter === "with_balance")
+      return list.filter((order) => Math.max(order.totalAmount - (order.paidAmount ?? 0), 0) > 0 && order.status !== "cancelled");
     if (statusFilter === "active")
       return list.filter((order) =>
         ["pending", "preparing", "ready"].includes(order.status),
@@ -360,10 +366,12 @@ export default function Orders() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">所有訂單</SelectItem>
+                <SelectItem value="today">今日訂單</SelectItem>
                 <SelectItem value="unpaid">未付款</SelectItem>
                 <SelectItem value="partially_paid">部分付款</SelectItem>
                 <SelectItem value="paid">已付款</SelectItem>
                 <SelectItem value="active">進行中訂單</SelectItem>
+                <SelectItem value="with_balance">有餘額</SelectItem>
                 <SelectItem value="cancelled">已取消</SelectItem>
                 {Object.entries(ORDER_STATUS_LABELS)
                   .filter(([val]) => val !== "cancelled")
@@ -406,6 +414,7 @@ export default function Orders() {
           <span className="w-24 text-right">合計</span>
           <span className="w-24 text-right">已收</span>
           <span className="w-24 text-right">餘額</span>
+          <span className="w-16 text-right">付款</span>
           <span className="w-32 text-right">入口</span>
         </div>
         {isLoading ? (
@@ -479,6 +488,7 @@ export default function Orders() {
                 >
                   ${balance.toFixed(2)}
                 </span>
+                <span className="w-16 text-right text-xs font-black text-muted-foreground">{order.paymentCount ?? 0} 筆</span>
                 <div className="flex w-32 justify-end gap-2">
                   <Link href={`/orders/${order.id}`}>
                     <Button
@@ -570,6 +580,9 @@ export default function Orders() {
                   <span className="rounded-full bg-muted px-2.5 py-1 text-[10px] font-black text-muted-foreground">
                     {ORDER_TYPE_LABELS[order.type] ?? order.type}
                     {order.tableId ? ` · ${order.tableId} 桌` : ""}
+                  </span>
+                  <span className="rounded-full bg-muted px-2.5 py-1 text-[10px] font-black text-muted-foreground">
+                    {order.paymentCount ?? 0} 筆付款
                   </span>
                 </div>
                 <div className="mt-4 grid grid-cols-3 gap-2 rounded-2xl bg-muted/50 p-3 text-center text-xs">

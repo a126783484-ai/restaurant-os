@@ -16,6 +16,7 @@ import {
   Sparkles,
   Radio,
   ArrowUpRight,
+  Wallet,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
@@ -31,6 +32,7 @@ const navItems: Array<{ href: string; label: string; shortLabel?: string; icon: 
   { href: "/products", label: "菜單管理", shortLabel: "菜單", icon: UtensilsCrossed, roles: ["admin", "manager", "staff"] },
   { href: "/inventory", label: "庫存管理", shortLabel: "庫存", icon: Package, roles: ["admin", "manager", "staff"] },
   { href: "/staff", label: "員工管理", shortLabel: "員工", icon: UserCog, roles: ["admin", "manager"] },
+  { href: "/closing", label: "日結 / 班結", shortLabel: "日結", icon: Wallet, roles: ["admin", "manager"] },
   { href: "/analytics", label: "AI 分析", shortLabel: "AI", icon: Brain, roles: ["admin", "manager"] },
 ];
 
@@ -50,6 +52,7 @@ const pageTitleByPath: Record<string, { title: string; subtitle: string }> = {
   "/products": { title: "菜單管理", subtitle: "商品、價格、分類與供應狀態" },
   "/inventory": { title: "庫存管理", subtitle: "原物料存量、低庫存提醒與採購判斷" },
   "/staff": { title: "員工管理", subtitle: "人員、班表、任務與角色權限" },
+  "/closing": { title: "日結 / 班結", subtitle: "應收、實收、未收、退款與付款方式對帳" },
   "/analytics": { title: "AI 營運分析", subtitle: "營收趨勢、熱銷商品與決策建議" },
 };
 
@@ -141,7 +144,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     [currentUser?.role],
   );
 
-  const mobileTabs = visibleNavItems.filter((item) => ["/", "/orders", "/kitchen", "/floor-plan", "/analytics"].includes(item.href)).slice(0, 5);
+  const mobileTabs = visibleNavItems.filter((item) => ["/", "/orders", "/kitchen", "/floor-plan", "/closing"].includes(item.href)).slice(0, 5);
 
   const sidebar = (
     <div className="flex h-full flex-col">

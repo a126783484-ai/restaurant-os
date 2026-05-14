@@ -267,7 +267,7 @@ const lazyRouteRecoveryMiddleware: RequestHandler = async (req, res, next) => {
     res.status(503).json({
       ok: false,
       route: entry.key,
-      error: "Route module failed to load",
+      error: { code: "ROUTE_MODULE_UNAVAILABLE", message: "Route module failed to load" },
       message,
       timestamp: new Date().toISOString(),
     });

@@ -51,6 +51,14 @@ function sendError(res: Response, status: number, code: string, message: string)
   });
 }
 
+
+function isDatabaseError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return ["ECONNREFUSED", "ENOTFOUND", "timeout", "database", "Connection terminated", "password authentication failed"].some((pattern) =>
+    message.includes(pattern),
+  );
+}
+
 function sendAuthSuccess(res: Response, token: string, user: AuthUser): void {
   setTokenCookie(res, token);
   res.status(200).json({
@@ -246,6 +254,13 @@ async function createUser(input: { name: string; email: string; password: string
   } catch (error: any) {
     if (error?.code === "23505") {
       throw Object.assign(new Error("Email is already registered."), { statusCode: 409, code: "AUTH_EMAIL_EXISTS" });
+    }
+    if (isDatabaseError(error)) {
+      throw Object.assign(new Error("Database unavailable while creating user account."), {
+        statusCode: 503,
+        code: "AUTH_DATABASE_UNAVAILABLE",
+        cause: error,
+      });
     }
     throw Object.assign(new Error("Unable to create user account."), {
       statusCode: 500,
@@ -445,6 +460,10 @@ router.post("/auth/login", async (req, res, next): Promise<void> => {
     const token = await issueToken(req, publicUser);
     sendAuthSuccess(res, token, publicUser);
   } catch (error) {
+    if (isDatabaseError(error)) {
+      sendError(res, 503, "AUTH_DATABASE_UNAVAILABLE", "Database unavailable while logging in.");
+      return;
+    }
     next(error);
   }
 });

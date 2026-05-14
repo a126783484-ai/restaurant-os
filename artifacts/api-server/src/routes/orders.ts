@@ -33,9 +33,18 @@ import {
   listRuntimeOrders,
   updateRuntimeOrder,
 } from "../lib/one-store-runtime";
+import {
+  assertOrderTransition,
+  buildOrderItemSnapshot,
+  centsToAmount,
+  dbOrderStatus,
+  dbOrderType,
+  normalizeOrderStatus,
+} from "../lib/v3-core";
 
 const router: IRouter = Router();
 const VALID_STATUSES = new Set([
+  "open",
   "pending",
   "preparing",
   "ready",
@@ -122,11 +131,6 @@ type NormalizeUpdateResult =
     }
   | { ok: false; message: string };
 
-function derivePaymentStatus(paidAmount: number, totalAmount: number): string {
-  if (paidAmount <= 0) return "unpaid";
-  if (paidAmount < totalAmount) return "partially_paid";
-  return "paid";
-}
 
 function normalizeItems(items: unknown[]): NormalizedOrderItemInput[] {
   return items
@@ -167,22 +171,16 @@ function normalizeUpdate(data: Record<string, unknown>): NormalizeUpdateResult {
   if (typeof data.status === "string") {
     if (!VALID_STATUSES.has(data.status))
       return { ok: false, message: "Invalid order status." };
-    update.status = data.status;
-    if (data.status === "cancelled" && typeof data.paymentStatus !== "string")
-      update.paymentStatus = "cancelled";
+    update.status = dbOrderStatus(data.status);
   }
   if (typeof data.paymentStatus === "string") {
     if (!VALID_PAYMENT_STATUSES.has(data.paymentStatus))
       return { ok: false, message: "Invalid payment status." };
-    update.paymentStatus = data.paymentStatus;
-    if (data.paymentStatus === "paid" && !data.paidAt)
-      update.paidAt = new Date().toISOString();
-    if (data.paymentStatus === "unpaid") update.paidAmount = 0;
+    return { ok: false, message: "Payment status is derived from the payment ledger." };
   }
   if (typeof data.paymentMethod === "string") {
     if (!VALID_PAYMENT_METHODS.has(data.paymentMethod))
       return { ok: false, message: "Invalid payment method." };
-    update.paymentMethod = data.paymentMethod;
   }
   if (typeof data.notes === "string" || data.notes === null)
     update.notes = data.notes;
@@ -191,12 +189,10 @@ function normalizeUpdate(data: Record<string, unknown>): NormalizeUpdateResult {
   if (typeof data.tableId === "number" || data.tableId === null)
     update.tableId = data.tableId;
   if (data.paidAmount !== undefined) {
-    const paidAmount = Number(data.paidAmount);
-    if (!Number.isFinite(paidAmount) || Number.isNaN(paidAmount))
-      return { ok: false, message: "paidAmount must be a valid number." };
-    if (paidAmount < 0)
-      return { ok: false, message: "paidAmount cannot be negative." };
-    update.paidAmount = Math.round(paidAmount * 100) / 100;
+    return { ok: false, message: "Paid amount is derived from the payment ledger." };
+  }
+  if (data.totalAmount !== undefined) {
+    return { ok: false, message: "Order total is derived from item price snapshots." };
   }
   if (typeof data.paidAt === "string") {
     const paidAt = new Date(data.paidAt);
@@ -236,15 +232,22 @@ async function buildDbItems(
         statusCode: 400,
       });
     const quantity = Math.max(1, Number(item.quantity) || 1);
-    const subtotal = Math.round(product.price * quantity * 100) / 100;
-    totalAmount += subtotal;
-    enrichedItems.push({
+    const snapshot = buildOrderItemSnapshot({
       productId: item.productId,
       productName: product.name,
-      quantity,
       unitPrice: product.price,
-      subtotal,
+      quantity,
       notes: item.notes ?? null,
+    });
+    const subtotal = centsToAmount(snapshot.lineSubtotalCents);
+    totalAmount += subtotal;
+    enrichedItems.push({
+      productId: snapshot.productId,
+      productName: snapshot.productName,
+      quantity: snapshot.quantity,
+      unitPrice: centsToAmount(snapshot.unitPriceCents),
+      subtotal,
+      notes: snapshot.notes ?? null,
     });
   }
   return { enrichedItems, totalAmount: Math.round(totalAmount * 100) / 100 };
@@ -337,7 +340,7 @@ router.post("/orders", async (req, res, next): Promise<void> => {
   if (!isDatabaseConfigured()) {
     const order = createRuntimeOrder({
       ...orderData,
-      type: orderData.type ?? "dine-in",
+      type: dbOrderType(orderData.type ?? "dine_in"),
       items: normalizedItems,
       idempotencyKey,
     });
@@ -364,7 +367,7 @@ router.post("/orders", async (req, res, next): Promise<void> => {
       .insert(ordersTable)
       .values({
         ...orderData,
-        type: orderData.type ?? "dine-in",
+        type: dbOrderType(orderData.type ?? "dine_in"),
         paymentStatus: "unpaid",
         paymentMethod: "unpaid",
         paidAmount: 0,
@@ -384,7 +387,7 @@ router.post("/orders", async (req, res, next): Promise<void> => {
         customerId: orderData.customerId,
         orderId: order.id,
         amount: totalAmount,
-        orderType: orderData.type ?? "dine-in",
+        orderType: dbOrderType(orderData.type ?? "dine_in"),
       });
       await db
         .update(customersTable)
@@ -398,7 +401,7 @@ router.post("/orders", async (req, res, next): Promise<void> => {
     res.status(201).json(await getDbOrder(order.id));
   } catch (error: any) {
     if (error?.statusCode) {
-      sendError(res, error.statusCode, "ORDER_CREATE_INVALID", error.message);
+      sendError(res, error.statusCode, error.code ?? "ORDER_CREATE_INVALID", error.message);
       return;
     }
     next(error);
@@ -431,7 +434,7 @@ router.get("/orders/:id/payments", async (req, res, next): Promise<void> => {
     return;
   }
   if (!isDatabaseConfigured()) {
-    sendError(res, 503, "DATABASE_REQUIRED", "Payment records require DATABASE_URL.");
+    sendError(res, 503, "DATABASE_UNAVAILABLE", "Payment records require DATABASE_URL.");
     return;
   }
   try {
@@ -469,7 +472,7 @@ router.post("/orders/:id/payments", async (req, res, next): Promise<void> => {
     return;
   }
   if (!isDatabaseConfigured()) {
-    sendError(res, 503, "DATABASE_REQUIRED", "Payment records require DATABASE_URL.");
+    sendError(res, 503, "DATABASE_UNAVAILABLE", "Payment records require DATABASE_URL.");
     return;
   }
   try {
@@ -486,7 +489,7 @@ router.post("/orders/:id/payments", async (req, res, next): Promise<void> => {
     res.status(201).json({ ...result, order });
   } catch (error: any) {
     if (error?.statusCode) {
-      sendError(res, error.statusCode, "PAYMENT_CREATE_FAILED", error.message);
+      sendError(res, error.statusCode, error.code ?? "PAYMENT_CREATE_FAILED", error.message);
       return;
     }
     next(error);
@@ -554,7 +557,17 @@ router.patch("/orders/:id", async (req, res, next): Promise<void> => {
       return;
     }
 
-    let effectiveTotalAmount = existing.totalAmount;
+    if (typeof update.status === "string") {
+      assertOrderTransition(existing.status, update.status);
+      if (normalizeOrderStatus(update.status) === "cancelled") {
+        const summary = await calculateOrderPaymentSummary(existing.id);
+        const user = getRequestUser(req);
+        if (summary.paidAmount > 0 && user?.role !== "admin" && user?.role !== "manager") {
+          throw Object.assign(new Error("Only admin or manager can cancel a paid or partially paid order."), { statusCode: 403, code: "AUTH_FORBIDDEN" });
+        }
+      }
+    }
+
     if (items) {
       const { enrichedItems, totalAmount } = await buildDbItems(items);
       await db
@@ -564,39 +577,8 @@ router.patch("/orders/:id", async (req, res, next): Promise<void> => {
         .insert(orderItemsTable)
         .values(enrichedItems.map((i) => ({ ...i, orderId: params.data.id })));
       update.totalAmount = totalAmount;
-      effectiveTotalAmount = totalAmount;
     }
 
-    if (
-      typeof update.paidAmount === "number" &&
-      !["refunded", "cancelled"].includes(
-        String(update.paymentStatus ?? existing.paymentStatus),
-      )
-    ) {
-      update.paymentStatus = derivePaymentStatus(
-        update.paidAmount,
-        effectiveTotalAmount,
-      );
-      update.paidAt =
-        update.paymentStatus === "paid" ? new Date().toISOString() : null;
-    }
-    if (
-      update.paymentStatus === "paid" &&
-      typeof update.paidAmount !== "number"
-    ) {
-      update.paidAmount = Math.max(
-        existing.paidAmount ?? 0,
-        effectiveTotalAmount,
-      );
-      update.paidAt = new Date().toISOString();
-    }
-    if (update.paymentStatus === "unpaid") {
-      update.paidAmount = 0;
-      update.paidAt = null;
-    }
-    if (update.paymentStatus === "cancelled") {
-      update.paidAt = null;
-    }
 
     const beforeAudit = { ...existing };
     const [order] = await db
@@ -605,7 +587,7 @@ router.patch("/orders/:id", async (req, res, next): Promise<void> => {
       .where(eq(ordersTable.id, params.data.id))
       .returning();
 
-    if (items || typeof update.paidAmount === "number" || update.paymentStatus || update.paymentMethod) {
+    if (items || update.status === "cancelled") {
       await syncOrderPaymentSummary(order.id, getRequestUser(req));
     }
     if (items || update.status === "cancelled") {
@@ -621,7 +603,7 @@ router.patch("/orders/:id", async (req, res, next): Promise<void> => {
     res.json(await getDbOrder(order.id));
   } catch (error: any) {
     if (error?.statusCode) {
-      sendError(res, error.statusCode, "ORDER_UPDATE_INVALID", error.message);
+      sendError(res, error.statusCode, error.code ?? "ORDER_UPDATE_INVALID", error.message);
       return;
     }
     next(error);

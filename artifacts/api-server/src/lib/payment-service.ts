@@ -1,9 +1,17 @@
 import { pool } from "@workspace/db";
 import type { AuthRole, AuthUser } from "../middlewares/auth";
+import {
+  assertCanApplyPayment,
+  centsToAmount,
+  deriveLedgerSummary,
+  toCents,
+  type DerivedPaymentStatus,
+  type PaymentMethod as V3PaymentMethod,
+} from "./v3-core";
 
-export type PaymentMethod = "cash" | "card" | "transfer" | "external";
+export type PaymentMethod = V3PaymentMethod;
 export type PaymentStatus = "paid" | "refunded" | "cancelled";
-export type OrderPaymentStatus = "unpaid" | "partially_paid" | "paid" | "refunded" | "cancelled";
+export type OrderPaymentStatus = DerivedPaymentStatus;
 
 export const PAYMENT_METHODS = new Set<PaymentMethod>(["cash", "card", "transfer", "external"]);
 export const PAYMENT_STATUSES = new Set<PaymentStatus>(["paid", "refunded", "cancelled"]);
@@ -37,7 +45,7 @@ export type OrderPaymentBundle = PaymentSummary & {
 };
 
 function roundMoney(value: number): number {
-  return Math.round((Number(value) || 0) * 100) / 100;
+  return centsToAmount(toCents(value));
 }
 
 function toIso(value: unknown): string {
@@ -71,11 +79,16 @@ export function deriveOrderPaymentStatus(
   paidAmount: number,
   totalAmount: number,
   orderStatus?: string,
+  refundedAmount = 0,
 ): OrderPaymentStatus {
-  if (orderStatus === "cancelled") return "cancelled";
-  if (paidAmount <= 0) return "unpaid";
-  if (paidAmount < totalAmount) return "partially_paid";
-  return "paid";
+  return deriveLedgerSummary({
+    orderStatus,
+    orderTotalCents: toCents(totalAmount),
+    events: [
+      { type: "payment", amountCents: toCents(paidAmount), status: "valid" },
+      ...(refundedAmount > 0 ? [{ type: "refund" as const, amountCents: toCents(refundedAmount), status: "refunded" as const }] : []),
+    ],
+  }).paymentStatus;
 }
 
 export function canAddPayment(role?: AuthRole): boolean {
@@ -120,6 +133,7 @@ export async function ensurePaymentSchema(): Promise<void> {
   await pool.query("ALTER TABLE payments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()");
   await pool.query("ALTER TABLE payments ADD COLUMN IF NOT EXISTS refunded_at TIMESTAMPTZ");
   await pool.query("ALTER TABLE payments ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ");
+  await pool.query("ALTER TABLE payments ADD COLUMN IF NOT EXISTS event_type TEXT NOT NULL DEFAULT 'payment'");
   await pool.query("CREATE INDEX IF NOT EXISTS idx_payments_order_id ON payments(order_id)");
   await pool.query("CREATE INDEX IF NOT EXISTS idx_payments_created_at ON payments(created_at)");
   await pool.query("CREATE INDEX IF NOT EXISTS idx_payments_method ON payments(method)");
@@ -185,19 +199,32 @@ export async function calculateOrderPaymentSummary(orderId: number): Promise<Pay
   if (!order) throw Object.assign(new Error("Order not found."), { statusCode: 404 });
   const paymentResult = await pool.query(
     `SELECT
-       COALESCE(SUM(amount) FILTER (WHERE status = 'paid'), 0)::float AS paid_amount,
+       COALESCE(SUM(amount) FILTER (WHERE status = 'paid'), 0)::float AS charge_amount,
+       COALESCE(SUM(amount) FILTER (WHERE status = 'refunded'), 0)::float AS refund_amount,
+       COALESCE(SUM(amount) FILTER (WHERE status = 'cancelled'), 0)::float AS void_amount,
        COUNT(*)::int AS payment_count
      FROM payments
      WHERE order_id = $1`,
     [orderId],
   );
-  const paidAmount = roundMoney(Number(paymentResult.rows[0]?.paid_amount ?? 0));
   const totalAmount = roundMoney(Number(order.total_amount ?? 0));
+  const chargeAmount = roundMoney(Number(paymentResult.rows[0]?.charge_amount ?? 0));
+  const refundAmount = roundMoney(Number(paymentResult.rows[0]?.refund_amount ?? 0));
+  const voidAmount = roundMoney(Number(paymentResult.rows[0]?.void_amount ?? 0));
+  const ledger = deriveLedgerSummary({
+    orderStatus: order.status,
+    orderTotalCents: toCents(totalAmount),
+    events: [
+      { type: "payment", amountCents: toCents(chargeAmount), status: "valid" },
+      { type: "refund", amountCents: toCents(refundAmount), status: "refunded" },
+      { type: "void", amountCents: toCents(voidAmount), status: "voided" },
+    ],
+  });
   return {
     totalAmount,
-    paidAmount,
-    balance: roundMoney(Math.max(totalAmount - paidAmount, 0)),
-    paymentStatus: deriveOrderPaymentStatus(paidAmount, totalAmount, order.status),
+    paidAmount: centsToAmount(ledger.netPaidCents),
+    balance: centsToAmount(ledger.balanceCents),
+    paymentStatus: ledger.paymentStatus,
     paymentCount: Number(paymentResult.rows[0]?.payment_count ?? 0),
   };
 }
@@ -248,15 +275,24 @@ export async function addPayment(input: {
   await ensurePaymentSchema();
   const amount = roundMoney(input.amount);
   if (!Number.isFinite(amount) || amount <= 0) {
-    throw Object.assign(new Error("Payment amount must be greater than 0."), { statusCode: 400 });
+    throw Object.assign(new Error("Payment amount must be greater than 0."), { statusCode: 400, code: "PAYMENT_INVALID_AMOUNT" });
   }
   if (!PAYMENT_METHODS.has(input.method)) {
     throw Object.assign(new Error("Invalid payment method."), { statusCode: 400 });
   }
-  const order = await pool.query("SELECT id, status FROM orders WHERE id = $1 LIMIT 1", [input.orderId]);
+  const order = await pool.query("SELECT id, status, total_amount FROM orders WHERE id = $1 LIMIT 1", [input.orderId]);
   if (!order.rows[0]) throw Object.assign(new Error("Order not found."), { statusCode: 404 });
   if (order.rows[0].status === "cancelled") {
-    throw Object.assign(new Error("Cannot add payment to a cancelled order."), { statusCode: 409 });
+    throw Object.assign(new Error("Cannot add payment to a cancelled order."), { statusCode: 409, code: "ORDER_INVALID_STATE" });
+  }
+  const currentSummary = await calculateOrderPaymentSummary(input.orderId);
+  try {
+    assertCanApplyPayment({ amountCents: toCents(amount), balanceCents: toCents(currentSummary.balance) });
+  } catch (error: any) {
+    throw Object.assign(error instanceof Error ? error : new Error("Invalid payment amount."), {
+      statusCode: error?.statusCode ?? 400,
+      code: error?.code ?? "PAYMENT_INVALID_AMOUNT",
+    });
   }
   const result = await pool.query(
     `INSERT INTO payments (order_id, amount, method, status, note, external_reference, created_by)
@@ -330,7 +366,9 @@ export async function getPaymentSummary(params: {
   const end = params.date ? new Date(`${params.date}T23:59:59.999Z`) : params.to ? new Date(params.to) : new Date();
   const ordersResult = await pool.query(
     `SELECT o.*,
-       COALESCE(SUM(p.amount) FILTER (WHERE p.status = 'paid'), 0)::float AS valid_paid_amount,
+       COALESCE(SUM(p.amount) FILTER (WHERE p.status = 'paid'), 0)::float AS charge_amount,
+       COALESCE(SUM(p.amount) FILTER (WHERE p.status = 'refunded'), 0)::float AS refund_amount,
+       COALESCE(SUM(p.amount) FILTER (WHERE p.status = 'cancelled'), 0)::float AS void_amount,
        COUNT(p.id)::int AS payment_count
      FROM orders o
      LEFT JOIN payments p ON p.order_id = o.id
@@ -339,19 +377,26 @@ export async function getPaymentSummary(params: {
      ORDER BY o.created_at DESC`,
     [start, end],
   );
-  const activeOrders = ordersResult.rows.filter((o) => o.status !== "cancelled");
   const enriched = ordersResult.rows.map((o) => {
     const totalAmount = roundMoney(Number(o.total_amount ?? 0));
-    const paidAmount = roundMoney(Number(o.valid_paid_amount ?? 0));
+    const ledger = deriveLedgerSummary({
+      orderStatus: o.status,
+      orderTotalCents: toCents(totalAmount),
+      events: [
+        { type: "payment", amountCents: toCents(Number(o.charge_amount ?? 0)), status: "valid" },
+        { type: "refund", amountCents: toCents(Number(o.refund_amount ?? 0)), status: "refunded" },
+        { type: "void", amountCents: toCents(Number(o.void_amount ?? 0)), status: "voided" },
+      ],
+    });
     return {
       id: Number(o.id),
       type: o.type,
       tableId: o.table_id == null ? null : Number(o.table_id),
       status: o.status,
-      paymentStatus: deriveOrderPaymentStatus(paidAmount, totalAmount, o.status),
+      paymentStatus: ledger.paymentStatus,
       totalAmount,
-      paidAmount,
-      balance: roundMoney(Math.max(totalAmount - paidAmount, 0)),
+      paidAmount: centsToAmount(ledger.netPaidCents),
+      balance: centsToAmount(ledger.balanceCents),
       paymentCount: Number(o.payment_count ?? 0),
       createdAt: toIso(o.created_at),
     };
@@ -389,8 +434,8 @@ export async function getPaymentSummary(params: {
     partiallyPaidOrders: partiallyPaidOrderList.length,
     paidOrders: paidOrderList.length,
     cancelledOrders: enriched.filter((o) => o.status === "cancelled").length,
-    orderCount: activeOrders.length,
-    averageOrderValue: activeOrders.length ? roundMoney(totalReceivable / activeOrders.length) : 0,
+    orderCount: activeEnriched.length,
+    averageOrderValue: activeEnriched.length ? roundMoney(totalReceivable / activeEnriched.length) : 0,
     unpaidOrderList,
     partiallyPaidOrderList,
     paidOrderList,

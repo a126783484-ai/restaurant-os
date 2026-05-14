@@ -111,6 +111,8 @@ router.get("/dashboard/summary", async (_req, res, next): Promise<void> => {
       pendingOrders: pendingOrders.length,
       activeReservations: activeReservations.length,
       weekSales: roundMoney(weekSummary.totalCollected),
+      partial: Boolean(paymentSummary.partial || weekSummary.partial),
+      degradedOrderCount: Number(paymentSummary.degradedOrderCount ?? 0) + Number(weekSummary.degradedOrderCount ?? 0),
     });
   } catch (error) {
     next(error);

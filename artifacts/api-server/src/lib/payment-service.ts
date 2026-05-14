@@ -436,27 +436,46 @@ export async function getPaymentSummary(params: {
   );
   const enriched = ordersResult.rows.map((o) => {
     const totalAmount = roundMoney(Number(o.total_amount ?? 0));
-    const ledger = deriveLedgerSummary({
-      orderStatus: o.status,
-      orderTotalCents: toCents(totalAmount),
-      events: [
-        { type: "payment", amountCents: toCents(Number(o.charge_amount ?? 0)), status: "valid" },
-        { type: "refund", amountCents: toCents(Number(o.refund_amount ?? 0)), status: "refunded" },
-        { type: "void", amountCents: toCents(Number(o.void_amount ?? 0)), status: "voided" },
-      ],
-    });
-    return {
+    const base = {
       id: Number(o.id),
       type: o.type,
       tableId: o.table_id == null ? null : Number(o.table_id),
       status: o.status,
-      paymentStatus: ledger.paymentStatus,
       totalAmount,
-      paidAmount: centsToAmount(ledger.netPaidCents),
-      balance: centsToAmount(ledger.balanceCents),
       paymentCount: Number(o.payment_count ?? 0),
       createdAt: toIso(o.created_at),
     };
+    try {
+      const ledger = deriveLedgerSummary({
+        orderStatus: o.status,
+        orderTotalCents: toCents(totalAmount),
+        events: [
+          { type: "payment", amountCents: toCents(Number(o.charge_amount ?? 0)), status: "valid" },
+          { type: "refund", amountCents: toCents(Number(o.refund_amount ?? 0)), status: "refunded" },
+          { type: "void", amountCents: toCents(Number(o.void_amount ?? 0)), status: "voided" },
+        ],
+      });
+      return {
+        ...base,
+        paymentStatus: ledger.paymentStatus,
+        paidAmount: centsToAmount(ledger.netPaidCents),
+        balance: centsToAmount(ledger.balanceCents),
+        paymentSummaryUnavailable: false,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Payment summary could not be calculated for this order.";
+      console.error("[payments] closing summary degraded for order", { orderId: base.id, message });
+      const paidAmount = roundMoney(Number(o.paid_amount ?? 0));
+      return {
+        ...base,
+        paymentStatus: typeof o.payment_status === "string" ? o.payment_status : "unpaid",
+        paidAmount,
+        balance: Math.max(totalAmount - paidAmount, 0),
+        paymentSummaryUnavailable: true,
+        paymentSummaryErrorCode: error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code) : "PAYMENT_SUMMARY_UNAVAILABLE",
+        paymentSummaryErrorMessage: message,
+      };
+    }
   });
   const activeEnriched = enriched.filter((o) => o.status !== "cancelled");
   const totalReceivable = roundMoney(activeEnriched.reduce((sum, o) => sum + o.totalAmount, 0));
@@ -497,5 +516,7 @@ export async function getPaymentSummary(params: {
     partiallyPaidOrderList,
     paidOrderList,
     payments,
+    partial: enriched.some((o) => o.paymentSummaryUnavailable),
+    degradedOrderCount: enriched.filter((o) => o.paymentSummaryUnavailable).length,
   };
 }

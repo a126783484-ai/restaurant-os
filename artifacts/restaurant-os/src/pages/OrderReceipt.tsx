@@ -56,6 +56,12 @@ const PAY_CLASS: Record<string, string> = {
   cancelled: "bg-muted text-muted-foreground",
 };
 
+type PaymentSummaryDegraded = { paymentSummaryUnavailable?: boolean };
+
+function isPaymentSummaryUnavailable(order: unknown): order is PaymentSummaryDegraded {
+  return Boolean((order as PaymentSummaryDegraded | null)?.paymentSummaryUnavailable);
+}
+
 function formatMoney(value: number) {
   return new Intl.NumberFormat("zh-TW", {
     style: "currency",
@@ -119,9 +125,10 @@ export default function OrderReceipt() {
     );
   }
 
+  const orderSummaryUnavailable = isPaymentSummaryUnavailable(order);
   const paidAmount = paymentsQuery.data?.paidAmount ?? order.paidAmount ?? 0;
   const balance = paymentsQuery.data?.balance ?? order.balance ?? 0;
-  const effectivePaymentStatus = paymentsQuery.data?.paymentStatus ?? order.paymentStatus;
+  const effectivePaymentStatus = orderSummaryUnavailable || paymentsQuery.error ? order.paymentStatus : (paymentsQuery.data?.paymentStatus ?? order.paymentStatus);
 
   return (
     <div className="min-h-full bg-muted/30 p-4 sm:p-6 print:bg-white print:p-0">
@@ -140,10 +147,12 @@ export default function OrderReceipt() {
           </Button>
         </div>
 
-        {paymentsQuery.error && (
+        {(paymentsQuery.error || orderSummaryUnavailable) && (
           <div className="rounded-3xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm font-bold text-amber-700 print:hidden">
-            {getSafeErrorMessage(paymentsQuery.error, "付款摘要暫時無法讀取，收據會先顯示訂單基本金額。")}
-            <Button variant="link" className="ml-2 h-auto p-0" onClick={() => paymentsQuery.refetch()}>
+            {paymentsQuery.error
+              ? getSafeErrorMessage(paymentsQuery.error, "付款摘要暫時無法讀取，收據會先顯示訂單基本金額。")
+              : "付款摘要暫時無法讀取，收據會先顯示訂單保存的金額狀態。"}
+            <Button variant="link" className="ml-2 h-auto p-0" onClick={() => paymentsQuery.error ? paymentsQuery.refetch() : refetch()}>
               重試付款摘要
             </Button>
           </div>

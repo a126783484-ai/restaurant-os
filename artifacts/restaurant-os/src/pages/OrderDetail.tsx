@@ -345,25 +345,7 @@ export default function OrderDetail() {
     return (
       <div className="mx-auto max-w-6xl space-y-4 p-4 sm:p-6">
         <div className="h-11 w-32 animate-pulse rounded-2xl bg-muted" />
-        {orderSummaryUnavailable && (
-        <div className="flex flex-col gap-2 rounded-3xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800 sm:flex-row sm:items-center sm:justify-between">
-          <span>付款摘要暫時無法讀取，已先顯示訂單保存的金額狀態。</span>
-          <Button variant="outline" className="min-h-10 rounded-2xl" onClick={() => refetch()} disabled={isFetching}>
-            {isFetching ? "重試中…" : "重試"}
-          </Button>
-        </div>
-      )}
-
-      {paymentsQuery.error && (
-        <div className="flex flex-col gap-2 rounded-3xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800 sm:flex-row sm:items-center sm:justify-between">
-          <span>{getSafeErrorMessage(paymentsQuery.error, "付款紀錄暫時無法讀取，頁面仍可查看訂單明細。")}</span>
-          <Button variant="outline" className="min-h-10 rounded-2xl" onClick={() => paymentsQuery.refetch()} disabled={paymentsQuery.isFetching}>
-            {paymentsQuery.isFetching ? "重試中…" : "重試付款摘要"}
-          </Button>
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {Array.from({ length: 3 }).map((_, index) => (
             <div
               key={index}
@@ -453,10 +435,10 @@ export default function OrderDetail() {
             <Badge
               className={cn(
                 "border-0 px-3 py-1 text-xs",
-                PAY_STATUS_COLORS[order.paymentStatus],
+                PAY_STATUS_COLORS[effectivePaymentStatus],
               )}
             >
-              {PAY_STATUS_LABELS[order.paymentStatus] ?? order.paymentStatus}
+              {PAY_STATUS_LABELS[effectivePaymentStatus] ?? effectivePaymentStatus}
             </Badge>
           </div>
         </div>
@@ -478,6 +460,24 @@ export default function OrderDetail() {
           tone={balance > 0 ? "danger" : "success"}
         />
       </div>
+
+      {orderSummaryUnavailable && (
+        <div className="flex flex-col gap-2 rounded-3xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800 sm:flex-row sm:items-center sm:justify-between">
+          <span>付款摘要暫時無法讀取，已先顯示訂單保存的金額狀態。</span>
+          <Button variant="outline" className="min-h-10 rounded-2xl" onClick={() => refetch()} disabled={isFetching}>
+            {isFetching ? "重試中…" : "重試"}
+          </Button>
+        </div>
+      )}
+
+      {paymentsQuery.error && (
+        <div className="flex flex-col gap-2 rounded-3xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800 sm:flex-row sm:items-center sm:justify-between">
+          <span>{getSafeErrorMessage(paymentsQuery.error, "付款紀錄暫時無法讀取，頁面仍可查看訂單明細。")}</span>
+          <Button variant="outline" className="min-h-10 rounded-2xl" onClick={() => paymentsQuery.refetch()} disabled={paymentsQuery.isFetching}>
+            {paymentsQuery.isFetching ? "重試中…" : "重試付款摘要"}
+          </Button>
+        </div>
+      )}
 
       <section className="grid grid-cols-1 gap-5 lg:grid-cols-[1.1fr_0.9fr]">
         <div className="rounded-[2rem] border border-card-border bg-card p-4 shadow-sm sm:p-5">
@@ -545,6 +545,13 @@ export default function OrderDetail() {
             </div>
             {paymentsQuery.isLoading ? (
               <div className="h-24 animate-pulse rounded-3xl bg-muted" />
+            ) : paymentsQuery.error ? (
+              <div className="flex flex-col gap-3 rounded-3xl border border-amber-300 bg-amber-50 p-5 text-sm font-bold text-amber-800 sm:flex-row sm:items-center sm:justify-between">
+                <span>{getSafeErrorMessage(paymentsQuery.error, "付款紀錄暫時無法讀取，請重試。")}</span>
+                <Button variant="outline" className="min-h-10 rounded-2xl" onClick={() => paymentsQuery.refetch()} disabled={paymentsQuery.isFetching}>
+                  {paymentsQuery.isFetching ? "重試中…" : "重試"}
+                </Button>
+              </div>
             ) : (paymentSummary?.payments?.length ?? 0) === 0 ? (
               <div className="rounded-3xl border border-dashed border-border p-5 text-center text-sm font-bold text-muted-foreground">尚無付款紀錄，請新增付款後再結帳。</div>
             ) : (

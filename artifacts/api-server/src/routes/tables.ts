@@ -1,7 +1,12 @@
 import { Router, type IRouter } from "express";
 import { eq } from "drizzle-orm";
 import { db, isDatabaseConfigured, pool, tablesTable } from "@workspace/db";
-import { listRuntimeTables } from "../lib/one-store-runtime";
+import {
+  createRuntimeTable,
+  deleteRuntimeTable,
+  listRuntimeTables,
+  updateRuntimeTable,
+} from "../lib/one-store-runtime";
 import {
   CreateTableBody,
   UpdateTableParams,
@@ -19,7 +24,10 @@ router.get("/tables", async (_req, res): Promise<void> => {
     return;
   }
 
-  const tables = await db.select().from(tablesTable).orderBy(tablesTable.number);
+  const tables = await db
+    .select()
+    .from(tablesTable)
+    .orderBy(tablesTable.number);
   res.json(tables);
 });
 
@@ -33,6 +41,22 @@ router.post("/tables", async (req, res): Promise<void> => {
   const { number, capacity, section, notes } = parsed.data;
   if (typeof number !== "number" || typeof capacity !== "number") {
     res.status(400).json({ error: "Table number and capacity are required" });
+    return;
+  }
+
+  if (!isDatabaseConfigured()) {
+    try {
+      res
+        .status(201)
+        .json(createRuntimeTable({ number, capacity, section, notes }));
+    } catch (error: any) {
+      res
+        .status(error?.statusCode ?? 400)
+        .json({
+          error: error?.message ?? "Table create failed",
+          code: error?.code,
+        });
+    }
     return;
   }
 
@@ -59,7 +83,21 @@ router.patch("/tables/:id", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const [table] = await db.update(tablesTable).set(parsed.data).where(eq(tablesTable.id, params.data.id)).returning();
+  if (!isDatabaseConfigured()) {
+    const table = updateRuntimeTable(params.data.id, parsed.data);
+    if (!table) {
+      res.status(404).json({ error: "Table not found" });
+      return;
+    }
+    res.json(table);
+    return;
+  }
+
+  const [table] = await db
+    .update(tablesTable)
+    .set(parsed.data)
+    .where(eq(tablesTable.id, params.data.id))
+    .returning();
   if (!table) {
     res.status(404).json({ error: "Table not found" });
     return;
@@ -74,12 +112,26 @@ router.delete("/tables/:id", async (req, res): Promise<void> => {
     return;
   }
 
+  const tableId = params.data.id;
+
   if (!isDatabaseConfigured()) {
-    res.status(501).json({ error: "Deleting runtime fallback tables is not supported." });
+    try {
+      const deleted = deleteRuntimeTable(tableId);
+      if (!deleted) {
+        res.status(404).json({ error: "Table not found" });
+        return;
+      }
+      res.status(204).send();
+    } catch (error: any) {
+      res
+        .status(error?.statusCode ?? 400)
+        .json({
+          error: error?.message ?? "Table delete failed",
+          code: error?.code,
+        });
+    }
     return;
   }
-
-  const tableId = params.data.id;
 
   const activeOrders = await pool.query<{ count: string }>(
     "SELECT COUNT(*)::int AS count FROM orders WHERE table_id = $1 AND status = ANY($2::text[])",
@@ -107,7 +159,10 @@ router.delete("/tables/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  const [deleted] = await db.delete(tablesTable).where(eq(tablesTable.id, tableId)).returning();
+  const [deleted] = await db
+    .delete(tablesTable)
+    .where(eq(tablesTable.id, tableId))
+    .returning();
   if (!deleted) {
     res.status(404).json({ error: "Table not found" });
     return;

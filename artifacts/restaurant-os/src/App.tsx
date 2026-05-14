@@ -10,6 +10,7 @@ import CustomerProfile from "@/pages/CustomerProfile";
 import Reservations from "@/pages/Reservations";
 import Orders from "@/pages/Orders";
 import OrderDetail from "@/pages/OrderDetail";
+import OrderReceipt from "@/pages/OrderReceipt";
 import Staff from "@/pages/Staff";
 import Products from "@/pages/Products";
 import FloorPlan from "@/pages/FloorPlan";
@@ -102,6 +103,9 @@ function Router() {
       </Route>
       <Route path="/reservations">
         <ProtectedPage><Reservations /></ProtectedPage>
+      </Route>
+      <Route path="/orders/:id/receipt">
+        <ProtectedPage><OrderReceipt /></ProtectedPage>
       </Route>
       <Route path="/orders/:id">
         <ProtectedPage><OrderDetail /></ProtectedPage>

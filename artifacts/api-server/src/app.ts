@@ -2,6 +2,7 @@ import express, { type ErrorRequestHandler, type RequestHandler } from "express"
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import crypto from "node:crypto";
+import { isDatabaseUnavailableError } from "@workspace/db";
 
 import { logger } from "./lib/logger";
 
@@ -87,7 +88,7 @@ const requestContextMiddleware: RequestHandler = (req, res, next) => {
 const notFoundHandler: RequestHandler = (req, res) => {
   res.status(404).json({
     ok: false,
-    error: "Not Found",
+    error: { code: "NOT_FOUND", message: "Not Found" },
     method: req.method,
     path: req.originalUrl,
     timestamp: new Date().toISOString(),
@@ -103,7 +104,7 @@ const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
         : 500;
   const safeStatusCode = statusCode >= 400 && statusCode < 600 ? statusCode : 500;
   const message = err instanceof Error ? err.message : String(err);
-  const dbError = isDatabaseConnectionError(message);
+  const dbError = isDatabaseUnavailableError(err) || isDatabaseConnectionError(message);
 
   logger.error(
     {
@@ -119,8 +120,8 @@ const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
   res.status(safeStatusCode).json({
     ok: false,
     error: {
-      code: dbError ? "DATABASE_CONNECTION_ERROR" : safeStatusCode >= 500 ? "INTERNAL_SERVER_ERROR" : "REQUEST_FAILED",
-      message: safeStatusCode >= 500 ? "Internal Server Error" : message,
+      code: (err as any)?.code ?? (dbError ? "DATABASE_UNAVAILABLE" : safeStatusCode >= 500 ? "INTERNAL_SERVER_ERROR" : "REQUEST_FAILED"),
+      message: dbError ? "Database unavailable. Please retry shortly." : safeStatusCode >= 500 ? "Internal Server Error" : message,
     },
     message: dbError || !isProductionRuntime() ? message : undefined,
     diagnostics: dbError ? { databaseUrl: getSafeDatabaseUrlDiagnostic() } : undefined,
@@ -194,7 +195,7 @@ async function loadApplicationRoutes() {
     app.use("/api", (_req, res) => {
       res.status(503).json({
         ok: false,
-        error: "API routes failed to load",
+        error: { code: "ROUTES_UNAVAILABLE", message: "API routes failed to load" },
         message: routesLoadError,
         databaseUrl: getSafeDatabaseUrlDiagnostic(),
         timestamp: new Date().toISOString(),

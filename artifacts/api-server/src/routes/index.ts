@@ -16,6 +16,7 @@ type RouteModuleKey =
   | "staff"
   | "dashboard"
   | "payments"
+  | "diagnostics"
   | "inventory"
   | "ai";
 
@@ -128,6 +129,15 @@ const routeModules: RouteModuleRecord[] = [
     protected: true,
     roles: ["admin", "manager"],
     load: () => import("./payments"),
+    error: null,
+    loadedAt: null,
+  },
+  {
+    key: "diagnostics",
+    paths: ["/diagnostics"],
+    protected: true,
+    roles: ["admin", "manager"],
+    load: () => import("./diagnostics"),
     error: null,
     loadedAt: null,
   },
@@ -267,7 +277,7 @@ const lazyRouteRecoveryMiddleware: RequestHandler = async (req, res, next) => {
     res.status(503).json({
       ok: false,
       route: entry.key,
-      error: "Route module failed to load",
+      error: { code: "ROUTE_MODULE_UNAVAILABLE", message: "Route module failed to load" },
       message,
       timestamp: new Date().toISOString(),
     });

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getClosingSummary, type ClosingOrder } from "@/lib/payments-api";
 import { cn } from "@/lib/utils";
+import { getSafeErrorMessage } from "@/lib/api-errors";
 
 const RANGE_LABELS: Record<string, string> = {
   today: "今日",
@@ -100,7 +101,7 @@ export default function Closing() {
         </div>
       </section>
 
-      {error && <div className="rounded-3xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-bold text-destructive">日結 API 無法讀取，請確認登入角色為 admin / manager。</div>}
+      {error && <div className="flex flex-col gap-3 rounded-3xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-bold text-destructive sm:flex-row sm:items-center sm:justify-between"><span>{getSafeErrorMessage(error, "日結 API 無法讀取，請確認登入角色為 admin / manager 或稍後重試。")}</span><Button variant="outline" className="min-h-10 rounded-2xl" onClick={() => refetch()}>{isLoading ? "重試中…" : "重試"}</Button></div>}
       {isLoading ? <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="h-28 animate-pulse rounded-3xl bg-muted" />)}</div> : data && <>
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <Metric label="今日應收" value={formatMoney(data.totalReceivable)} icon={ReceiptText} />
@@ -126,6 +127,7 @@ export default function Closing() {
           {data.payments.length === 0 ? <p className="rounded-2xl border border-dashed border-border p-4 text-center text-sm font-bold text-muted-foreground">此範圍沒有付款紀錄</p> : <div className="space-y-2">{data.payments.slice(0, 20).map((payment) => <div key={payment.id} className="flex flex-col gap-1 rounded-2xl border border-border p-3 sm:flex-row sm:items-center sm:justify-between"><span className="font-black">#{payment.orderId} · {formatMoney(payment.amount)} · {payment.method}</span><span className="text-xs text-muted-foreground">{new Date(payment.createdAt).toLocaleString("zh-TW")} · {payment.status}</span></div>)}</div>}
         </div>
       </>}
+      {!isLoading && !data && !error && <div className="rounded-3xl border border-dashed border-border bg-card p-6 text-center text-sm font-bold text-muted-foreground">目前沒有日結資料。</div>}
     </div>
   );
 }

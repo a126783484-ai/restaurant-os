@@ -15,8 +15,17 @@ import {
 
 const router: IRouter = Router();
 
-const ACTIVE_ORDER_STATUSES = ["pending", "preparing", "ready"];
+const ACTIVE_ORDER_STATUSES = ["open", "pending", "preparing", "ready"];
 const ACTIVE_RESERVATION_STATUSES = ["pending", "confirmed", "seated"];
+
+function sendError(res: Parameters<Parameters<IRouter["get"]>[1]>[1], status: number, code: string, message: string): void {
+  res.status(status).json({
+    ok: false,
+    error: { code, message },
+    message,
+    timestamp: new Date().toISOString(),
+  });
+}
 
 router.get("/tables", async (_req, res): Promise<void> => {
   if (!isDatabaseConfigured()) {
@@ -34,13 +43,13 @@ router.get("/tables", async (_req, res): Promise<void> => {
 router.post("/tables", async (req, res): Promise<void> => {
   const parsed = CreateTableBody.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.message });
+    sendError(res, 400, "VALIDATION_ERROR", parsed.error.message);
     return;
   }
 
   const { number, capacity, section, notes } = parsed.data;
   if (typeof number !== "number" || typeof capacity !== "number") {
-    res.status(400).json({ error: "Table number and capacity are required" });
+    sendError(res, 400, "VALIDATION_ERROR", "Table number and capacity are required");
     return;
   }
 
@@ -50,12 +59,7 @@ router.post("/tables", async (req, res): Promise<void> => {
         .status(201)
         .json(createRuntimeTable({ number, capacity, section, notes }));
     } catch (error: any) {
-      res
-        .status(error?.statusCode ?? 400)
-        .json({
-          error: error?.message ?? "Table create failed",
-          code: error?.code,
-        });
+      sendError(res, error?.statusCode ?? 400, error?.code ?? "VALIDATION_ERROR", error?.message ?? "Table create failed");
     }
     return;
   }
@@ -75,18 +79,18 @@ router.post("/tables", async (req, res): Promise<void> => {
 router.patch("/tables/:id", async (req, res): Promise<void> => {
   const params = UpdateTableParams.safeParse(req.params);
   if (!params.success) {
-    res.status(400).json({ error: params.error.message });
+    sendError(res, 400, "VALIDATION_ERROR", params.error.message);
     return;
   }
   const parsed = UpdateTableBody.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.message });
+    sendError(res, 400, "VALIDATION_ERROR", parsed.error.message);
     return;
   }
   if (!isDatabaseConfigured()) {
     const table = updateRuntimeTable(params.data.id, parsed.data);
     if (!table) {
-      res.status(404).json({ error: "Table not found" });
+      sendError(res, 404, "TABLE_NOT_FOUND", "Table not found");
       return;
     }
     res.json(table);
@@ -99,7 +103,7 @@ router.patch("/tables/:id", async (req, res): Promise<void> => {
     .where(eq(tablesTable.id, params.data.id))
     .returning();
   if (!table) {
-    res.status(404).json({ error: "Table not found" });
+    sendError(res, 404, "TABLE_NOT_FOUND", "Table not found");
     return;
   }
   res.json(table);
@@ -108,7 +112,7 @@ router.patch("/tables/:id", async (req, res): Promise<void> => {
 router.delete("/tables/:id", async (req, res): Promise<void> => {
   const params = UpdateTableParams.safeParse(req.params);
   if (!params.success) {
-    res.status(400).json({ error: params.error.message });
+    sendError(res, 400, "VALIDATION_ERROR", params.error.message);
     return;
   }
 
@@ -118,17 +122,12 @@ router.delete("/tables/:id", async (req, res): Promise<void> => {
     try {
       const deleted = deleteRuntimeTable(tableId);
       if (!deleted) {
-        res.status(404).json({ error: "Table not found" });
+        sendError(res, 404, "TABLE_NOT_FOUND", "Table not found");
         return;
       }
       res.status(204).send();
     } catch (error: any) {
-      res
-        .status(error?.statusCode ?? 400)
-        .json({
-          error: error?.message ?? "Table delete failed",
-          code: error?.code,
-        });
+      sendError(res, error?.statusCode ?? 400, error?.code ?? "VALIDATION_ERROR", error?.message ?? "Table delete failed");
     }
     return;
   }
@@ -139,10 +138,7 @@ router.delete("/tables/:id", async (req, res): Promise<void> => {
   );
 
   if (Number(activeOrders.rows[0]?.count ?? 0) > 0) {
-    res.status(409).json({
-      error: "Table has active orders and cannot be deleted.",
-      code: "TABLE_HAS_ACTIVE_ORDERS",
-    });
+    sendError(res, 409, "TABLE_HAS_ACTIVE_ORDER", "Table has active orders and cannot be deleted.");
     return;
   }
 
@@ -152,10 +148,7 @@ router.delete("/tables/:id", async (req, res): Promise<void> => {
   );
 
   if (Number(activeReservations.rows[0]?.count ?? 0) > 0) {
-    res.status(409).json({
-      error: "Table has active reservations and cannot be deleted.",
-      code: "TABLE_HAS_ACTIVE_RESERVATIONS",
-    });
+    sendError(res, 409, "TABLE_HAS_ACTIVE_RESERVATION", "Table has active reservations and cannot be deleted.");
     return;
   }
 
@@ -164,7 +157,7 @@ router.delete("/tables/:id", async (req, res): Promise<void> => {
     .where(eq(tablesTable.id, tableId))
     .returning();
   if (!deleted) {
-    res.status(404).json({ error: "Table not found" });
+    sendError(res, 404, "TABLE_NOT_FOUND", "Table not found");
     return;
   }
 

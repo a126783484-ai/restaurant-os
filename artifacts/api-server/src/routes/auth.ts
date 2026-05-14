@@ -2,7 +2,7 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
-import { isDatabaseConfigured, pool } from "@workspace/db";
+import { checkDatabaseConnection, getDatabaseRuntimeStatus, isDatabaseConfigured, isDatabaseUnavailableError, pool } from "@workspace/db";
 import { getRequestUser, requireAuth, type AuthRole, type AuthUser } from "../middlewares/auth";
 import { revokeRuntimeSession } from "../lib/auth-sessions";
 import { getJwtSecret } from "../lib/jwt-secret";
@@ -51,13 +51,19 @@ function sendError(res: Response, status: number, code: string, message: string)
   });
 }
 
-function sendAuthSuccess(res: Response, token: string, user: AuthUser): void {
+
+function isDatabaseError(error: unknown): boolean {
+  return isDatabaseUnavailableError(error);
+}
+
+function sendAuthSuccess(res: Response, token: string, user: AuthUser, warnings: string[] = []): void {
   setTokenCookie(res, token);
   res.status(200).json({
     ok: true,
     token,
     user,
-    message: "Authentication successful.",
+    warnings,
+    message: warnings.length > 0 ? "Authentication successful with warnings." : "Authentication successful.",
     timestamp: new Date().toISOString(),
   });
 }
@@ -247,6 +253,13 @@ async function createUser(input: { name: string; email: string; password: string
     if (error?.code === "23505") {
       throw Object.assign(new Error("Email is already registered."), { statusCode: 409, code: "AUTH_EMAIL_EXISTS" });
     }
+    if (isDatabaseError(error)) {
+      throw Object.assign(new Error("Database unavailable while creating user account."), {
+        statusCode: 503,
+        code: "AUTH_DATABASE_UNAVAILABLE",
+        cause: error,
+      });
+    }
     throw Object.assign(new Error("Unable to create user account."), {
       statusCode: 500,
       code: "AUTH_USER_CREATE_FAILED",
@@ -273,7 +286,7 @@ async function revokeSession(sessionId: string | undefined): Promise<void> {
   await pool.query("UPDATE sessions SET revoked = TRUE, updated_at = NOW() WHERE id = $1", [sessionId]);
 }
 
-async function issueToken(req: Request, user: AuthUser): Promise<string> {
+async function issueToken(req: Request, user: AuthUser): Promise<{ token: string; warnings: string[] }> {
   const sessionId = crypto.randomUUID();
   let token: string;
   try {
@@ -286,16 +299,14 @@ async function issueToken(req: Request, user: AuthUser): Promise<string> {
     });
   }
 
+  const warnings: string[] = [];
   try {
     await createSession(req, user, token, sessionId);
   } catch (error) {
-    throw Object.assign(new Error("User was created, but session creation failed. Please use the login tab."), {
-      statusCode: 202,
-      code: "AUTH_SESSION_CREATE_FAILED",
-      cause: error,
-    });
+    const message = error instanceof Error ? error.message : String(error);
+    warnings.push(`Session persistence failed; JWT cookie/token was issued. ${message}`);
   }
-  return token;
+  return { token, warnings };
 }
 
 function validateRegisterBody(body: RegisterBody, res: Response): { name: string; email: string; password: string; role: AuthRole } | null {
@@ -349,6 +360,13 @@ router.get("/auth/diagnostics", async (_req, res) => {
   }
 
   if (isDatabaseConfigured()) {
+    const connection = await checkDatabaseConnection();
+    checks.push({
+      step: "database.connect",
+      ok: connection.ok,
+      message: connection.ok ? `${connection.latencyMs}ms` : connection.ok === false ? connection.error : undefined,
+    });
+
     try {
       await ensureAuthSchema();
       checks.push({ step: "ensureAuthSchema", ok: true });
@@ -356,18 +374,24 @@ router.get("/auth/diagnostics", async (_req, res) => {
       checks.push({ step: "ensureAuthSchema", ok: false, message: error instanceof Error ? error.message : String(error) });
     }
 
-    const client = await pool.connect();
     try {
+      const usersResult = await pool.query("SELECT COUNT(*)::int AS count FROM users");
+      checks.push({ step: "users.query", ok: Number.isInteger(Number(usersResult.rows[0]?.count)) });
+    } catch (error) {
+      checks.push({ step: "users.query", ok: false, message: error instanceof Error ? error.message : String(error) });
+    }
+
+    let client: any = null;
+    try {
+      client = await pool.connect();
       await client.query("BEGIN");
       const passwordHash = await bcrypt.hash("diagnostic-password", 4);
-      const userResult = await client.query<{ id: number }>(
+      const userResult = await client.query(
         `INSERT INTO users (name, email, password_hash, role, account_type)
          VALUES ($1, $2, $3, $4, $4)
          RETURNING id`,
         ["Diagnostic User", `diagnostic-${Date.now()}@example.com`, passwordHash, "admin"],
       );
-      checks.push({ step: "users.insert", ok: Boolean(userResult.rows[0]?.id) });
-
       const token = createToken({ ...sampleUser, id: userResult.rows[0].id }, crypto.randomUUID());
       await client.query(
         `INSERT INTO sessions (id, user_id, token_hash, user_agent, ip_address, expires_at)
@@ -377,20 +401,21 @@ router.get("/auth/diagnostics", async (_req, res) => {
       checks.push({ step: "sessions.insert", ok: true });
       await client.query("ROLLBACK");
     } catch (error) {
-      checks.push({ step: "db.rollback-smoke", ok: false, message: error instanceof Error ? error.message : String(error) });
-      await client.query("ROLLBACK").catch(() => undefined);
+      checks.push({ step: "sessions.insert", ok: false, message: error instanceof Error ? error.message : String(error) });
+      await client?.query("ROLLBACK").catch(() => undefined);
     } finally {
-      client.release();
+      client?.release();
     }
   } else {
     checks.push({ step: "database.configured", ok: false, message: "DATABASE_URL is not configured." });
   }
 
   const ok = checks.every((check) => check.ok);
-  res.status(ok ? 200 : 500).json({
+  res.status(ok ? 200 : 503).json({
     ok,
     productionRuntime: isProductionRuntime(),
     databaseConfigured: isDatabaseConfigured(),
+    database: getDatabaseRuntimeStatus(),
     checks,
     timestamp: new Date().toISOString(),
   });
@@ -403,8 +428,8 @@ router.post("/auth/register", async (req, res, next): Promise<void> => {
   try {
     const user = await createUser(parsed);
     const publicUser = safeUser(user);
-    const token = await issueToken(req, publicUser);
-    sendAuthSuccess(res, token, publicUser);
+    const { token, warnings } = await issueToken(req, publicUser);
+    sendAuthSuccess(res, token, publicUser, warnings);
   } catch (error: any) {
     if (error?.statusCode === 202) {
       sendError(res, 202, error.code ?? "AUTH_PARTIAL_SUCCESS", error.message);
@@ -442,9 +467,13 @@ router.post("/auth/login", async (req, res, next): Promise<void> => {
     }
 
     const publicUser = safeUser(user);
-    const token = await issueToken(req, publicUser);
-    sendAuthSuccess(res, token, publicUser);
+    const { token, warnings } = await issueToken(req, publicUser);
+    sendAuthSuccess(res, token, publicUser, warnings);
   } catch (error) {
+    if (isDatabaseError(error)) {
+      sendError(res, 503, "AUTH_DATABASE_UNAVAILABLE", "Database unavailable while logging in.");
+      return;
+    }
     next(error);
   }
 });
@@ -465,11 +494,17 @@ router.get("/auth/me", requireAuth, (req, res): void => {
 
 router.post("/auth/logout", requireAuth, async (req, res): Promise<void> => {
   const user = getRequestUser(req);
-  await revokeSession(user?.sessionId);
+  const warnings: string[] = [];
+  try {
+    await revokeSession(user?.sessionId);
+  } catch (error) {
+    warnings.push(error instanceof Error ? error.message : String(error));
+  }
   clearTokenCookie(res);
   res.status(200).json({
     ok: true,
-    message: "Logged out.",
+    message: warnings.length > 0 ? "Logged out locally; session persistence cleanup failed." : "Logged out.",
+    warnings,
     timestamp: new Date().toISOString(),
   });
 });

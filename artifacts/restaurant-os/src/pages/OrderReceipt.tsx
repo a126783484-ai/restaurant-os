@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { getOrderPayments } from "@/lib/payments-api";
+import { getSafeErrorMessage } from "@/lib/api-errors";
 
 const ORDER_STATUS_LABELS: Record<string, string> = {
   pending: "待處理",
@@ -80,6 +81,8 @@ export default function OrderReceipt() {
     data: order,
     isLoading,
     error,
+    refetch,
+    isFetching,
   } = useGetOrder(orderId, {
     query: {
       enabled: Number.isFinite(orderId),
@@ -100,13 +103,18 @@ export default function OrderReceipt() {
 
   if (error || !order) {
     return (
-      <div className="mx-auto max-w-xl p-6 text-center">
+      <div className="mx-auto max-w-xl space-y-4 p-6 text-center">
         <p className="text-sm text-muted-foreground">
-          找不到此訂單，或目前無法讀取收據資料。
+          {error ? getSafeErrorMessage(error, "目前無法讀取收據資料。") : "找不到此訂單。"}
         </p>
-        <Link href="/orders">
-          <Button variant="link">返回訂單列表</Button>
-        </Link>
+        <div className="flex flex-col justify-center gap-2 sm:flex-row">
+          <Button variant="outline" onClick={() => refetch()} disabled={isFetching}>
+            {isFetching ? "重試中…" : "重試"}
+          </Button>
+          <Link href="/orders">
+            <Button variant="link">返回訂單列表</Button>
+          </Link>
+        </div>
       </div>
     );
   }
@@ -131,6 +139,15 @@ export default function OrderReceipt() {
             <Printer className="h-4 w-4" /> 列印收據
           </Button>
         </div>
+
+        {paymentsQuery.error && (
+          <div className="rounded-3xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm font-bold text-amber-700 print:hidden">
+            {getSafeErrorMessage(paymentsQuery.error, "付款摘要暫時無法讀取，收據會先顯示訂單基本金額。")}
+            <Button variant="link" className="ml-2 h-auto p-0" onClick={() => paymentsQuery.refetch()}>
+              重試付款摘要
+            </Button>
+          </div>
+        )}
 
         <main className="rounded-[2rem] border border-border bg-card p-6 shadow-sm print:rounded-none print:border-0 print:bg-white print:p-0 print:shadow-none">
           <header className="border-b border-border pb-5 text-center">

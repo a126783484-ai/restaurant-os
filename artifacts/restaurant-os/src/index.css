@@ -294,3 +294,28 @@
     inset: -1px;
   }
 }
+@media print {
+  @page {
+    margin: 10mm;
+  }
+
+  body {
+    background: #fff !important;
+  }
+
+  nav,
+  aside,
+  header.app-shell-header,
+  .print\:hidden,
+  [data-sidebar],
+  button {
+    display: none !important;
+  }
+
+  main,
+  article,
+  section,
+  div {
+    box-shadow: none !important;
+  }
+}

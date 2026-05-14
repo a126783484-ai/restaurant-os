@@ -331,6 +331,9 @@ export interface TaskUpdate {
 
 export interface DashboardSummary {
   todaySales: number;
+  todayReceivable?: number;
+  todayCollected?: number;
+  todayOutstanding?: number;
   todayOrders: number;
   todayCustomers: number;
   repeatCustomerRate: number;

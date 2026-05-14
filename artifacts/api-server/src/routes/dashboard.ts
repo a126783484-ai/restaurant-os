@@ -1,7 +1,21 @@
 import { Router, type IRouter } from "express";
 import { gte, eq, sql } from "drizzle-orm";
-import { db, isDatabaseConfigured, ordersTable, orderItemsTable, productsTable, customersTable, reservationsTable, visitsTable } from "@workspace/db";
-import { getRuntimeCustomerFlow, getRuntimeDashboardSummary, getRuntimeRecentActivity, getRuntimeTopProducts } from "../lib/one-store-runtime";
+import {
+  db,
+  isDatabaseConfigured,
+  ordersTable,
+  orderItemsTable,
+  productsTable,
+  customersTable,
+  reservationsTable,
+  visitsTable,
+} from "@workspace/db";
+import {
+  getRuntimeCustomerFlow,
+  getRuntimeDashboardSummary,
+  getRuntimeRecentActivity,
+  getRuntimeTopProducts,
+} from "../lib/one-store-runtime";
 
 const router: IRouter = Router();
 
@@ -26,8 +40,18 @@ function isActiveOrder(order: { status: string }): boolean {
   return order.status !== "cancelled";
 }
 
-function countsAsRevenue(order: { status: string; paymentStatus: string }): boolean {
-  return order.status === "completed" || order.paymentStatus === "paid";
+function collectedAmount(order: {
+  paymentStatus: string;
+  paidAmount?: number | null;
+  totalAmount: number;
+}): number {
+  if (order.paymentStatus === "paid")
+    return order.paidAmount && order.paidAmount > 0
+      ? order.paidAmount
+      : order.totalAmount;
+  if (order.paymentStatus === "partially_paid")
+    return Math.max(order.paidAmount ?? 0, 0);
+  return 0;
 }
 
 router.get("/dashboard/summary", async (_req, res): Promise<void> => {
@@ -39,31 +63,67 @@ router.get("/dashboard/summary", async (_req, res): Promise<void> => {
   const today = startOfDay();
   const week = sevenDaysAgo();
 
-  const todayOrders = await db.select().from(ordersTable).where(gte(ordersTable.createdAt, today));
+  const todayOrders = await db
+    .select()
+    .from(ordersTable)
+    .where(gte(ordersTable.createdAt, today));
   const activeTodayOrders = todayOrders.filter(isActiveOrder);
-  const todaySales = activeTodayOrders.filter(countsAsRevenue).reduce((sum, order) => sum + order.totalAmount, 0);
+  const todayReceivable = activeTodayOrders.reduce(
+    (sum, order) => sum + order.totalAmount,
+    0,
+  );
+  const todayCollected = activeTodayOrders.reduce(
+    (sum, order) => sum + collectedAmount(order),
+    0,
+  );
+  const todayOutstanding = Math.max(todayReceivable - todayCollected, 0);
 
-  const weekOrders = await db.select().from(ordersTable).where(gte(ordersTable.createdAt, week));
-  const weekSales = weekOrders.filter((order) => isActiveOrder(order) && countsAsRevenue(order)).reduce((sum, order) => sum + order.totalAmount, 0);
+  const weekOrders = await db
+    .select()
+    .from(ordersTable)
+    .where(gte(ordersTable.createdAt, week));
+  const weekSales = weekOrders
+    .filter(isActiveOrder)
+    .reduce((sum, order) => sum + collectedAmount(order), 0);
 
-  const todayVisits = await db.select().from(visitsTable).where(gte(visitsTable.visitedAt, today));
+  const todayVisits = await db
+    .select()
+    .from(visitsTable)
+    .where(gte(visitsTable.visitedAt, today));
   const customerIds = new Set(todayVisits.map((visit) => visit.customerId));
-  const visitOrderIds = new Set(todayVisits.map((visit) => visit.orderId).filter(Boolean));
+  const visitOrderIds = new Set(
+    todayVisits.map((visit) => visit.orderId).filter(Boolean),
+  );
 
   let orderFallbackCustomers = 0;
   for (const order of activeTodayOrders) {
     if (order.customerId) customerIds.add(order.customerId);
-    if (!order.customerId && !visitOrderIds.has(order.id)) orderFallbackCustomers += 1;
+    if (!order.customerId && !visitOrderIds.has(order.id))
+      orderFallbackCustomers += 1;
   }
 
   const allCustomers = await db.select().from(customersTable);
-  const repeatCustomers = allCustomers.filter((customer) => customer.visitCount > 1).length;
-  const repeatCustomerRate = allCustomers.length > 0 ? (repeatCustomers / allCustomers.length) * 100 : 0;
-  const pendingOrders = await db.select().from(ordersTable).where(eq(ordersTable.status, "pending"));
-  const activeReservations = await db.select().from(reservationsTable).where(sql`${reservationsTable.status} IN ('pending', 'confirmed', 'seated')`);
+  const repeatCustomers = allCustomers.filter(
+    (customer) => customer.visitCount > 1,
+  ).length;
+  const repeatCustomerRate =
+    allCustomers.length > 0 ? (repeatCustomers / allCustomers.length) * 100 : 0;
+  const pendingOrders = await db
+    .select()
+    .from(ordersTable)
+    .where(eq(ordersTable.status, "pending"));
+  const activeReservations = await db
+    .select()
+    .from(reservationsTable)
+    .where(
+      sql`${reservationsTable.status} IN ('pending', 'confirmed', 'seated')`,
+    );
 
   res.json({
-    todaySales: roundMoney(todaySales),
+    todaySales: roundMoney(todayCollected),
+    todayReceivable: roundMoney(todayReceivable),
+    todayCollected: roundMoney(todayCollected),
+    todayOutstanding: roundMoney(todayOutstanding),
     todayOrders: activeTodayOrders.length,
     todayCustomers: customerIds.size + orderFallbackCustomers,
     repeatCustomerRate: Math.round(repeatCustomerRate * 10) / 10,
@@ -92,13 +152,17 @@ router.get("/dashboard/top-products", async (_req, res): Promise<void> => {
     .limit(10);
 
   const products = await db.select().from(productsTable);
-  const productMap = new Map(products.map((product) => [product.id, product.category]));
+  const productMap = new Map(
+    products.map((product) => [product.id, product.category]),
+  );
 
-  res.json(result.map((item) => ({
-    ...item,
-    category: productMap.get(item.productId) ?? "Unknown",
-    totalRevenue: roundMoney(item.totalRevenue),
-  })));
+  res.json(
+    result.map((item) => ({
+      ...item,
+      category: productMap.get(item.productId) ?? "Unknown",
+      totalRevenue: roundMoney(item.totalRevenue),
+    })),
+  );
 });
 
 router.get("/dashboard/customer-flow", async (_req, res): Promise<void> => {
@@ -108,9 +172,17 @@ router.get("/dashboard/customer-flow", async (_req, res): Promise<void> => {
   }
 
   const today = startOfDay();
-  const visits = await db.select().from(visitsTable).where(gte(visitsTable.visitedAt, today));
-  const orders = await db.select().from(ordersTable).where(gte(ordersTable.createdAt, today));
-  const visitOrderIds = new Set(visits.map((visit) => visit.orderId).filter(Boolean));
+  const visits = await db
+    .select()
+    .from(visitsTable)
+    .where(gte(visitsTable.visitedAt, today));
+  const orders = await db
+    .select()
+    .from(ordersTable)
+    .where(gte(ordersTable.createdAt, today));
+  const visitOrderIds = new Set(
+    visits.map((visit) => visit.orderId).filter(Boolean),
+  );
 
   const hourMap: Record<string, number> = {};
   for (let hour = 8; hour <= 22; hour += 1) {
@@ -130,7 +202,9 @@ router.get("/dashboard/customer-flow", async (_req, res): Promise<void> => {
     if (hourMap[label] !== undefined) hourMap[label] += 1;
   }
 
-  res.json(Object.entries(hourMap).map(([hour, customers]) => ({ hour, customers })));
+  res.json(
+    Object.entries(hourMap).map(([hour, customers]) => ({ hour, customers })),
+  );
 });
 
 router.get("/dashboard/recent-activity", async (_req, res): Promise<void> => {
@@ -139,8 +213,18 @@ router.get("/dashboard/recent-activity", async (_req, res): Promise<void> => {
     return;
   }
 
-  const activity: { id: string; type: string; description: string; amount: number | null; createdAt: string }[] = [];
-  const recentOrders = await db.select().from(ordersTable).orderBy(sql`${ordersTable.createdAt} DESC`).limit(5);
+  const activity: {
+    id: string;
+    type: string;
+    description: string;
+    amount: number | null;
+    createdAt: string;
+  }[] = [];
+  const recentOrders = await db
+    .select()
+    .from(ordersTable)
+    .orderBy(sql`${ordersTable.createdAt} DESC`)
+    .limit(5);
   for (const order of recentOrders) {
     activity.push({
       id: `order-${order.id}`,
@@ -151,7 +235,11 @@ router.get("/dashboard/recent-activity", async (_req, res): Promise<void> => {
     });
   }
 
-  const recentReservations = await db.select().from(reservationsTable).orderBy(sql`${reservationsTable.createdAt} DESC`).limit(5);
+  const recentReservations = await db
+    .select()
+    .from(reservationsTable)
+    .orderBy(sql`${reservationsTable.createdAt} DESC`)
+    .limit(5);
   for (const reservation of recentReservations) {
     activity.push({
       id: `reservation-${reservation.id}`,
@@ -162,7 +250,11 @@ router.get("/dashboard/recent-activity", async (_req, res): Promise<void> => {
     });
   }
 
-  const recentCustomers = await db.select().from(customersTable).orderBy(sql`${customersTable.createdAt} DESC`).limit(3);
+  const recentCustomers = await db
+    .select()
+    .from(customersTable)
+    .orderBy(sql`${customersTable.createdAt} DESC`)
+    .limit(3);
   for (const customer of recentCustomers) {
     activity.push({
       id: `customer-${customer.id}`,
@@ -173,7 +265,9 @@ router.get("/dashboard/recent-activity", async (_req, res): Promise<void> => {
     });
   }
 
-  activity.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  activity.sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
   res.json(activity.slice(0, 15));
 });
 

@@ -1,6 +1,15 @@
 import { Router, type IRouter, type Response } from "express";
 import { eq, and, gte, lte, sql } from "drizzle-orm";
-import { db, isDatabaseConfigured, orderItemsTable, ordersTable, pool, productsTable, customersTable, visitsTable } from "@workspace/db";
+import {
+  db,
+  isDatabaseConfigured,
+  orderItemsTable,
+  ordersTable,
+  pool,
+  productsTable,
+  customersTable,
+  visitsTable,
+} from "@workspace/db";
 import {
   ListOrdersQueryParams,
   CreateOrderBody,
@@ -8,15 +17,43 @@ import {
   UpdateOrderParams,
   UpdateOrderBody,
 } from "@workspace/api-zod";
-import { createRuntimeOrder, getRuntimeOrder, listRuntimeOrders, updateRuntimeOrder } from "../lib/one-store-runtime";
+import {
+  createRuntimeOrder,
+  getRuntimeOrder,
+  listRuntimeOrders,
+  updateRuntimeOrder,
+} from "../lib/one-store-runtime";
 
 const router: IRouter = Router();
-const VALID_STATUSES = new Set(["pending", "preparing", "ready", "completed", "cancelled"]);
-const VALID_PAYMENT_STATUSES = new Set(["unpaid", "partially_paid", "paid", "refunded", "cancelled"]);
-const VALID_PAYMENT_METHODS = new Set(["unpaid", "cash", "card", "transfer", "external"]);
+const VALID_STATUSES = new Set([
+  "pending",
+  "preparing",
+  "ready",
+  "completed",
+  "cancelled",
+]);
+const VALID_PAYMENT_STATUSES = new Set([
+  "unpaid",
+  "partially_paid",
+  "paid",
+  "refunded",
+  "cancelled",
+]);
+const VALID_PAYMENT_METHODS = new Set([
+  "unpaid",
+  "cash",
+  "card",
+  "transfer",
+  "external",
+]);
 let orderSchemaReady: Promise<void> | null = null;
 
-function sendError(res: Response, status: number, code: string, message: string): void {
+function sendError(
+  res: Response,
+  status: number,
+  code: string,
+  message: string,
+): void {
   res.status(status).json({
     ok: false,
     error: { code, message },
@@ -28,54 +65,166 @@ function sendError(res: Response, status: number, code: string, message: string)
 async function ensureOrderSchema(): Promise<void> {
   if (!isDatabaseConfigured()) return;
   orderSchemaReady ??= (async () => {
-    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS paid_amount REAL NOT NULL DEFAULT 0");
-    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_note TEXT");
-    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ");
-    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS idempotency_key TEXT");
-    await pool.query("CREATE INDEX IF NOT EXISTS idx_orders_idempotency_key ON orders (idempotency_key)");
+    await pool.query(
+      "ALTER TABLE orders ADD COLUMN IF NOT EXISTS paid_amount REAL NOT NULL DEFAULT 0",
+    );
+    await pool.query(
+      "ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_note TEXT",
+    );
+    await pool.query(
+      "ALTER TABLE orders ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ",
+    );
+    await pool.query(
+      "ALTER TABLE orders ADD COLUMN IF NOT EXISTS idempotency_key TEXT",
+    );
+    await pool.query(
+      "CREATE INDEX IF NOT EXISTS idx_orders_idempotency_key ON orders (idempotency_key)",
+    );
   })();
   await orderSchemaReady;
 }
 
-function getIdempotencyKey(req: Parameters<IRouter["post"]>[1] extends (...args: infer A) => any ? A[0] : any): string | null {
+function getIdempotencyKey(
+  req: Parameters<IRouter["post"]>[1] extends (...args: infer A) => any
+    ? A[0]
+    : any,
+): string | null {
   const header = req.header("x-idempotency-key");
-  const bodyKey = typeof req.body?.idempotencyKey === "string" ? req.body.idempotencyKey : null;
+  const bodyKey =
+    typeof req.body?.idempotencyKey === "string"
+      ? req.body.idempotencyKey
+      : null;
   const key = (header ?? bodyKey)?.trim();
   return key || null;
 }
 
-function normalizeUpdate(data: Record<string, unknown>): Record<string, unknown> | null {
+type NormalizedOrderItemInput = {
+  productId: number;
+  quantity: number;
+  notes?: string | null;
+};
+
+type NormalizeUpdateResult =
+  | {
+      ok: true;
+      update: Record<string, unknown>;
+      items?: NormalizedOrderItemInput[];
+    }
+  | { ok: false; message: string };
+
+function derivePaymentStatus(paidAmount: number, totalAmount: number): string {
+  if (paidAmount <= 0) return "unpaid";
+  if (paidAmount < totalAmount) return "partially_paid";
+  return "paid";
+}
+
+function normalizeItems(items: unknown[]): NormalizedOrderItemInput[] {
+  return items
+    .map((item) => {
+      const entry = item as Record<string, unknown>;
+      const productId = Number(entry.productId);
+      const quantity = Number(entry.quantity);
+      if (!Number.isInteger(productId) || productId <= 0) {
+        throw Object.assign(
+          new Error("Each order item must include a valid productId."),
+          { statusCode: 400 },
+        );
+      }
+      if (!Number.isFinite(quantity) || quantity < 0) {
+        throw Object.assign(
+          new Error(
+            "Item quantity must be a number greater than or equal to 0.",
+          ),
+          { statusCode: 400 },
+        );
+      }
+      return {
+        productId,
+        quantity,
+        notes:
+          typeof entry.notes === "string"
+            ? entry.notes
+            : entry.notes === null
+              ? null
+              : undefined,
+      };
+    })
+    .filter((item) => item.quantity > 0);
+}
+
+function normalizeUpdate(data: Record<string, unknown>): NormalizeUpdateResult {
   const update: Record<string, unknown> = {};
   if (typeof data.status === "string") {
-    if (!VALID_STATUSES.has(data.status)) return null;
+    if (!VALID_STATUSES.has(data.status))
+      return { ok: false, message: "Invalid order status." };
     update.status = data.status;
+    if (data.status === "cancelled" && typeof data.paymentStatus !== "string")
+      update.paymentStatus = "cancelled";
   }
   if (typeof data.paymentStatus === "string") {
-    if (!VALID_PAYMENT_STATUSES.has(data.paymentStatus)) return null;
+    if (!VALID_PAYMENT_STATUSES.has(data.paymentStatus))
+      return { ok: false, message: "Invalid payment status." };
     update.paymentStatus = data.paymentStatus;
-    if (data.paymentStatus === "paid" && !data.paidAt) update.paidAt = new Date().toISOString();
+    if (data.paymentStatus === "paid" && !data.paidAt)
+      update.paidAt = new Date().toISOString();
     if (data.paymentStatus === "unpaid") update.paidAmount = 0;
   }
   if (typeof data.paymentMethod === "string") {
-    if (!VALID_PAYMENT_METHODS.has(data.paymentMethod)) return null;
+    if (!VALID_PAYMENT_METHODS.has(data.paymentMethod))
+      return { ok: false, message: "Invalid payment method." };
     update.paymentMethod = data.paymentMethod;
   }
-  if (typeof data.notes === "string" || data.notes === null) update.notes = data.notes;
-  if (typeof data.paymentNote === "string" || data.paymentNote === null) update.paymentNote = data.paymentNote;
-  if (typeof data.paidAmount === "number") update.paidAmount = Math.max(0, data.paidAmount);
-  if (typeof data.totalAmount === "number") update.totalAmount = Math.max(0, data.totalAmount);
-  if (typeof data.paidAt === "string") update.paidAt = new Date(data.paidAt).toISOString();
+  if (typeof data.notes === "string" || data.notes === null)
+    update.notes = data.notes;
+  if (typeof data.paymentNote === "string" || data.paymentNote === null)
+    update.paymentNote = data.paymentNote;
+  if (typeof data.tableId === "number" || data.tableId === null)
+    update.tableId = data.tableId;
+  if (data.paidAmount !== undefined) {
+    const paidAmount = Number(data.paidAmount);
+    if (!Number.isFinite(paidAmount) || Number.isNaN(paidAmount))
+      return { ok: false, message: "paidAmount must be a valid number." };
+    if (paidAmount < 0)
+      return { ok: false, message: "paidAmount cannot be negative." };
+    update.paidAmount = Math.round(paidAmount * 100) / 100;
+  }
+  if (typeof data.paidAt === "string") {
+    const paidAt = new Date(data.paidAt);
+    if (Number.isNaN(paidAt.getTime()))
+      return { ok: false, message: "paidAt must be a valid date." };
+    update.paidAt = paidAt.toISOString();
+  }
   if (data.paidAt === null) update.paidAt = null;
-  if (Array.isArray(data.items)) update.items = data.items;
-  return update;
+  let items: NormalizedOrderItemInput[] | undefined;
+  if (Array.isArray(data.items)) {
+    try {
+      items = normalizeItems(data.items);
+    } catch (error: any) {
+      return { ok: false, message: error?.message ?? "Invalid order items." };
+    }
+    if (items.length === 0)
+      return {
+        ok: false,
+        message: "Order must keep at least one item after editing.",
+      };
+  }
+  return { ok: true, update, items };
 }
 
-async function buildDbItems(items: Array<{ productId: number; quantity: number; notes?: string | null }>) {
+async function buildDbItems(
+  items: Array<{ productId: number; quantity: number; notes?: string | null }>,
+) {
   let totalAmount = 0;
   const enrichedItems = [];
   for (const item of items) {
-    const [product] = await db.select().from(productsTable).where(eq(productsTable.id, item.productId));
-    if (!product) throw Object.assign(new Error(`Product ${item.productId} not found`), { statusCode: 400 });
+    const [product] = await db
+      .select()
+      .from(productsTable)
+      .where(eq(productsTable.id, item.productId));
+    if (!product)
+      throw Object.assign(new Error(`Product ${item.productId} not found`), {
+        statusCode: 400,
+      });
     const quantity = Math.max(1, Number(item.quantity) || 1);
     const subtotal = Math.round(product.price * quantity * 100) / 100;
     totalAmount += subtotal;
@@ -116,9 +265,17 @@ router.get("/orders", async (req, res, next): Promise<void> => {
       conditions.push(lte(ordersTable.createdAt, endOfDay));
     }
 
-    const orders = conditions.length > 0
-      ? await db.select().from(ordersTable).where(and(...conditions)).orderBy(sql`${ordersTable.createdAt} DESC`)
-      : await db.select().from(ordersTable).orderBy(sql`${ordersTable.createdAt} DESC`);
+    const orders =
+      conditions.length > 0
+        ? await db
+            .select()
+            .from(ordersTable)
+            .where(and(...conditions))
+            .orderBy(sql`${ordersTable.createdAt} DESC`)
+        : await db
+            .select()
+            .from(ordersTable)
+            .orderBy(sql`${ordersTable.createdAt} DESC`);
 
     res.json(orders);
   } catch (error) {
@@ -134,15 +291,36 @@ router.post("/orders", async (req, res, next): Promise<void> => {
   }
 
   const { items, ...orderData } = parsed.data;
-  const normalizedItems = items as Array<{ productId: number; quantity: number; notes?: string | null }>;
+  let normalizedItems: NormalizedOrderItemInput[];
+  try {
+    normalizedItems = normalizeItems(items as unknown[]);
+  } catch (error: any) {
+    sendError(
+      res,
+      error?.statusCode ?? 400,
+      "ORDER_ITEMS_INVALID",
+      error?.message ?? "Invalid order items.",
+    );
+    return;
+  }
   const idempotencyKey = getIdempotencyKey(req);
   if (!normalizedItems.length) {
-    sendError(res, 400, "ORDER_ITEMS_REQUIRED", "At least one order item is required.");
+    sendError(
+      res,
+      400,
+      "ORDER_ITEMS_REQUIRED",
+      "At least one order item is required.",
+    );
     return;
   }
 
   if (!isDatabaseConfigured()) {
-    const order = createRuntimeOrder({ ...orderData, type: orderData.type ?? "dine-in", items: normalizedItems, idempotencyKey });
+    const order = createRuntimeOrder({
+      ...orderData,
+      type: orderData.type ?? "dine-in",
+      items: normalizedItems,
+      idempotencyKey,
+    });
     res.status(201).json(order);
     return;
   }
@@ -150,7 +328,10 @@ router.post("/orders", async (req, res, next): Promise<void> => {
   try {
     await ensureOrderSchema();
     if (idempotencyKey) {
-      const existing = await pool.query("SELECT id FROM orders WHERE idempotency_key = $1 LIMIT 1", [idempotencyKey]);
+      const existing = await pool.query(
+        "SELECT id FROM orders WHERE idempotency_key = $1 LIMIT 1",
+        [idempotencyKey],
+      );
       if (existing.rows[0]?.id) {
         const order = await getDbOrder(Number(existing.rows[0].id));
         res.status(200).json(order);
@@ -159,18 +340,23 @@ router.post("/orders", async (req, res, next): Promise<void> => {
     }
 
     const { enrichedItems, totalAmount } = await buildDbItems(normalizedItems);
-    const [order] = await db.insert(ordersTable).values({
-      ...orderData,
-      type: orderData.type ?? "dine-in",
-      paymentStatus: "unpaid",
-      paymentMethod: "unpaid",
-      paidAmount: 0,
-      totalAmount,
-      idempotencyKey,
-    }).returning();
+    const [order] = await db
+      .insert(ordersTable)
+      .values({
+        ...orderData,
+        type: orderData.type ?? "dine-in",
+        paymentStatus: "unpaid",
+        paymentMethod: "unpaid",
+        paidAmount: 0,
+        totalAmount,
+        idempotencyKey,
+      })
+      .returning();
 
     if (enrichedItems.length > 0) {
-      await db.insert(orderItemsTable).values(enrichedItems.map(i => ({ ...i, orderId: order.id })));
+      await db
+        .insert(orderItemsTable)
+        .values(enrichedItems.map((i) => ({ ...i, orderId: order.id })));
     }
 
     if (orderData.customerId) {
@@ -180,7 +366,8 @@ router.post("/orders", async (req, res, next): Promise<void> => {
         amount: totalAmount,
         orderType: orderData.type ?? "dine-in",
       });
-      await db.update(customersTable)
+      await db
+        .update(customersTable)
         .set({
           visitCount: sql`${customersTable.visitCount} + 1`,
           totalSpend: sql`${customersTable.totalSpend} + ${totalAmount}`,
@@ -199,9 +386,15 @@ router.post("/orders", async (req, res, next): Promise<void> => {
 });
 
 async function getDbOrder(id: number) {
-  const [order] = await db.select().from(ordersTable).where(eq(ordersTable.id, id));
+  const [order] = await db
+    .select()
+    .from(ordersTable)
+    .where(eq(ordersTable.id, id));
   if (!order) return null;
-  const items = await db.select().from(orderItemsTable).where(eq(orderItemsTable.orderId, order.id));
+  const items = await db
+    .select()
+    .from(orderItemsTable)
+    .where(eq(orderItemsTable.orderId, order.id));
   return { ...order, items };
 }
 
@@ -243,14 +436,16 @@ router.patch("/orders/:id", async (req, res, next): Promise<void> => {
     sendError(res, 400, "ORDER_UPDATE_INVALID", parsed.error.message);
     return;
   }
-  const update = normalizeUpdate(parsed.data as Record<string, unknown>);
-  if (!update) {
-    sendError(res, 400, "ORDER_UPDATE_INVALID", "Invalid order status or payment value.");
+  const normalized = normalizeUpdate(parsed.data as Record<string, unknown>);
+  if ("message" in normalized) {
+    sendError(res, 400, "ORDER_UPDATE_INVALID", normalized.message);
     return;
   }
+  const { update, items } = normalized;
 
   if (!isDatabaseConfigured()) {
-    const order = updateRuntimeOrder(params.data.id, update);
+    const runtimePatch = items ? { ...update, items } : update;
+    const order = updateRuntimeOrder(params.data.id, runtimePatch);
     if (!order) sendError(res, 404, "ORDER_NOT_FOUND", "Order not found.");
     else res.json(order);
     return;
@@ -258,21 +453,61 @@ router.patch("/orders/:id", async (req, res, next): Promise<void> => {
 
   try {
     await ensureOrderSchema();
-    if (Array.isArray(update.items)) {
-      const { enrichedItems, totalAmount } = await buildDbItems(update.items as Array<{ productId: number; quantity: number; notes?: string | null }>);
-      await db.delete(orderItemsTable).where(eq(orderItemsTable.orderId, params.data.id));
-      if (enrichedItems.length > 0) {
-        await db.insert(orderItemsTable).values(enrichedItems.map(i => ({ ...i, orderId: params.data.id })));
-      }
-      update.totalAmount = totalAmount;
-      delete update.items;
-    }
-
-    const [order] = await db.update(ordersTable).set(update).where(eq(ordersTable.id, params.data.id)).returning();
-    if (!order) {
+    const existing = await getDbOrder(params.data.id);
+    if (!existing) {
       sendError(res, 404, "ORDER_NOT_FOUND", "Order not found.");
       return;
     }
+
+    let effectiveTotalAmount = existing.totalAmount;
+    if (items) {
+      const { enrichedItems, totalAmount } = await buildDbItems(items);
+      await db
+        .delete(orderItemsTable)
+        .where(eq(orderItemsTable.orderId, params.data.id));
+      await db
+        .insert(orderItemsTable)
+        .values(enrichedItems.map((i) => ({ ...i, orderId: params.data.id })));
+      update.totalAmount = totalAmount;
+      effectiveTotalAmount = totalAmount;
+    }
+
+    if (
+      typeof update.paidAmount === "number" &&
+      !["refunded", "cancelled"].includes(
+        String(update.paymentStatus ?? existing.paymentStatus),
+      )
+    ) {
+      update.paymentStatus = derivePaymentStatus(
+        update.paidAmount,
+        effectiveTotalAmount,
+      );
+      update.paidAt =
+        update.paymentStatus === "paid" ? new Date().toISOString() : null;
+    }
+    if (
+      update.paymentStatus === "paid" &&
+      typeof update.paidAmount !== "number"
+    ) {
+      update.paidAmount = Math.max(
+        existing.paidAmount ?? 0,
+        effectiveTotalAmount,
+      );
+      update.paidAt = new Date().toISOString();
+    }
+    if (update.paymentStatus === "unpaid") {
+      update.paidAmount = 0;
+      update.paidAt = null;
+    }
+    if (update.paymentStatus === "cancelled") {
+      update.paidAt = null;
+    }
+
+    const [order] = await db
+      .update(ordersTable)
+      .set(update)
+      .where(eq(ordersTable.id, params.data.id))
+      .returning();
     res.json(await getDbOrder(order.id));
   } catch (error: any) {
     if (error?.statusCode) {

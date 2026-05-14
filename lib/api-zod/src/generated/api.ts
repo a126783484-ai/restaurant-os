@@ -676,6 +676,9 @@ export const DeleteTaskParams = zod.object({
  */
 export const GetDashboardSummaryResponse = zod.object({
   todaySales: zod.number(),
+  todayReceivable: zod.number().optional(),
+  todayCollected: zod.number().optional(),
+  todayOutstanding: zod.number().optional(),
   todayOrders: zod.number(),
   todayCustomers: zod.number(),
   repeatCustomerRate: zod.number(),

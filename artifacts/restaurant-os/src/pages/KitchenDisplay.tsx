@@ -4,7 +4,6 @@ import {
   getGetDashboardSummaryQueryKey,
   getGetOrderQueryKey,
   getListOrdersQueryKey,
-  type OrderDetail,
 } from "@workspace/api-client-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -19,7 +18,7 @@ import {
   Utensils,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { getKdsBoard } from "@/lib/kds-api";
+import { getKdsBoard, type KdsOrder } from "@/lib/kds-api";
 import { getSafeErrorMessage } from "@/lib/api-errors";
 
 const STATUS_NEXT: Record<string, string> = {
@@ -104,7 +103,7 @@ function KDSCard({
   order,
   onAdvance,
 }: {
-  order: OrderDetail;
+  order: KdsOrder;
   onAdvance: () => void;
 }) {
   const updateOrder = useUpdateOrder();
@@ -123,8 +122,7 @@ function KDSCard({
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: ["kds-board"] });
-          queryClient.invalidateQueries({ queryKey: ["kds-board"] });
-      queryClient.invalidateQueries({ queryKey: getListOrdersQueryKey() });
+          queryClient.invalidateQueries({ queryKey: getListOrdersQueryKey() });
           queryClient.invalidateQueries({
             queryKey: getGetOrderQueryKey(order.id),
           });
@@ -132,6 +130,10 @@ function KDSCard({
             queryKey: getGetDashboardSummaryQueryKey(),
           });
           onAdvance();
+        },
+        onError: () => {
+          queryClient.invalidateQueries({ queryKey: ["kds-board"] });
+          queryClient.invalidateQueries({ queryKey: getGetOrderQueryKey(order.id) });
         },
       },
     );
@@ -203,6 +205,20 @@ function KDSCard({
         </p>
       )}
 
+      {order.dataQualityIssue && (
+        <div className="mt-3 rounded-2xl border border-amber-400/70 bg-amber-100/90 px-3 py-2 text-xs font-black text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/50 dark:text-amber-100">
+          <AlertTriangle className="mr-1.5 inline h-3.5 w-3.5" />
+          資料警示：{order.dataQualityCode ?? "DATA_QUALITY_ISSUE"}
+          <p className="mt-1 font-bold">{order.dataQualityMessage ?? "此訂單資料需要人工檢查，但不會阻塞 KDS 顯示。"}</p>
+        </div>
+      )}
+
+      {updateOrder.error && (
+        <div className="mt-3 rounded-2xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs font-bold text-destructive">
+          更新失敗：{getSafeErrorMessage(updateOrder.error, "訂單狀態更新逾時或失敗，已重新同步訂單狀態。")}
+        </div>
+      )}
+
       {next && (
         <button
           onClick={handleAdvance}
@@ -232,7 +248,7 @@ function Column({
   title: string;
   subtitle: string;
   badge: string;
-  orders: OrderDetail[];
+  orders: KdsOrder[];
   onAdvance: () => void;
 }) {
   return (
@@ -284,6 +300,7 @@ export default function KitchenDisplay() {
   } = useQuery({
     queryKey: ["kds-board"],
     queryFn: getKdsBoard,
+    retry: 1,
   });
   const [lastRefresh, setLastRefresh] = useState(new Date());
 
@@ -355,12 +372,17 @@ export default function KitchenDisplay() {
       <div className="flex-1 overflow-y-auto p-4 sm:p-6">
         <div className="mx-auto max-w-7xl">
           {error && (
-            <div className="mb-4 rounded-3xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-bold text-destructive">
-              <AlertTriangle className="mr-2 inline h-4 w-4" /> KDS
-              {getSafeErrorMessage(error, "KDS 暫時無法讀取訂單，請重新整理。")}
+            <div className="mb-4 flex flex-col gap-3 rounded-3xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-bold text-destructive sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                <AlertTriangle className="mr-2 inline h-4 w-4" /> KDS 讀取失敗：
+                {getSafeErrorMessage(error, "KDS 暫時無法讀取訂單，可能是 API 逾時，請重新整理。")}
+              </span>
+              <Button variant="outline" size="sm" onClick={refresh} className="min-h-10 rounded-2xl bg-background/80 text-foreground">
+                重試
+              </Button>
             </div>
           )}
-          {loading ? (
+          {loading && !board ? (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {Array.from({ length: 3 }).map((_, i) => (
                 <div

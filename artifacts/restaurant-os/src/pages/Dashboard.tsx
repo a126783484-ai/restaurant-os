@@ -21,6 +21,7 @@ import {
   RefreshCw,
   Clock,
   CalendarDays,
+  CreditCard,
   DollarSign,
   Activity,
   ChefHat,
@@ -365,24 +366,24 @@ export default function Dashboard() {
                 tone={summary.pendingOrders > 0 ? "warning" : "default"}
               />
               <KPICard
-                title="今日顧客"
-                value={String(summary.todayCustomers)}
-                sub="不重複訪客"
-                icon={Users}
-              />
-              <KPICard
-                title="回客率"
-                value={`${summary.repeatCustomerRate.toFixed(1)}%`}
-                sub="回頭客比例"
-                icon={RefreshCw}
+                title="現金收入"
+                value={formatCurrency(summary.cashTotal ?? 0)}
+                sub="有效 paid payments"
+                icon={DollarSign}
                 tone="success"
               />
               <KPICard
-                title="待處理訂單"
-                value={String(summary.pendingOrders)}
-                sub="前台與廚房優先處理"
+                title="刷卡 / 轉帳 / 外部"
+                value={`${formatCurrency((summary.cardTotal ?? 0) + (summary.transferTotal ?? 0) + (summary.externalTotal ?? 0))}`}
+                sub={`刷卡 ${formatCurrency(summary.cardTotal ?? 0)} · 轉帳 ${formatCurrency(summary.transferTotal ?? 0)}`}
+                icon={CreditCard}
+              />
+              <KPICard
+                title="未付款 / 部分付款"
+                value={`${summary.unpaidOrders ?? 0} / ${summary.partiallyPaidOrders ?? 0}`}
+                sub={`有餘額 ${summary.hasOutstandingOrders ?? 0} 筆`}
                 icon={Clock}
-                tone={summary.pendingOrders > 0 ? "warning" : "success"}
+                tone={(summary.hasOutstandingOrders ?? 0) > 0 ? "warning" : "success"}
               />
               <KPICard
                 title="本週實收"

@@ -11,3 +11,4 @@ export * from "./tasks";
 export * from "./payments";
 export * from "./inventory";
 export * from "./users";
+export * from "./audit-logs";

@@ -20,6 +20,8 @@ export interface OrderDetail {
   paymentMethod?: string | null;
   paidAmount?: number;
   totalAmount: number;
+  balance?: number;
+  paymentCount?: number;
   /** @nullable */
   paymentNote?: string | null;
   /** @nullable */

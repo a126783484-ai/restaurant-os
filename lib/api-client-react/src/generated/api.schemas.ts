@@ -160,6 +160,8 @@ export interface Order {
   paymentMethod?: string | null;
   paidAmount?: number;
   totalAmount: number;
+  balance?: number;
+  paymentCount?: number;
   /** @nullable */
   paymentNote?: string | null;
   /** @nullable */
@@ -194,6 +196,8 @@ export interface OrderDetail {
   paymentMethod?: string | null;
   paidAmount?: number;
   totalAmount: number;
+  balance?: number;
+  paymentCount?: number;
   /** @nullable */
   paymentNote?: string | null;
   /** @nullable */
@@ -334,6 +338,16 @@ export interface DashboardSummary {
   todayReceivable?: number;
   todayCollected?: number;
   todayOutstanding?: number;
+  cashTotal?: number;
+  cardTotal?: number;
+  transferTotal?: number;
+  externalTotal?: number;
+  refundedTotal?: number;
+  cancelledPaymentTotal?: number;
+  unpaidOrders?: number;
+  partiallyPaidOrders?: number;
+  paidOrders?: number;
+  hasOutstandingOrders?: number;
   todayOrders: number;
   todayCustomers: number;
   repeatCustomerRate: number;

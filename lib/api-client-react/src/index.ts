@@ -5,6 +5,7 @@ export {
   setAuthTokenGetter,
   ApiError,
   ResponseParseError,
+  customFetch,
 } from "./custom-fetch";
 export type {
   AuthTokenGetter,

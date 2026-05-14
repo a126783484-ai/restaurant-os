@@ -7,8 +7,6 @@ import {
   ordersTable,
   pool,
   productsTable,
-  customersTable,
-  visitsTable,
 } from "@workspace/db";
 import {
   ListOrdersQueryParams,
@@ -22,6 +20,7 @@ import {
   addPayment,
   canAddPayment,
   calculateOrderPaymentSummary,
+  ensurePaymentSchema,
   getOrderPaymentBundle,
   syncOrderPaymentSummary,
   writeAuditLog,
@@ -33,9 +32,23 @@ import {
   listRuntimeOrders,
   updateRuntimeOrder,
 } from "../lib/one-store-runtime";
+import {
+  ACTIVE_DINE_IN_ORDER_STATUSES,
+  KDS_ACTIVE_ORDER_STATUSES,
+  groupKdsOrdersByStatus,
+} from "../lib/order-domain-service";
+import {
+  assertOrderTransition,
+  buildOrderItemSnapshot,
+  centsToAmount,
+  dbOrderStatus,
+  dbOrderType,
+  normalizeOrderStatus,
+} from "../lib/v3-core";
 
 const router: IRouter = Router();
 const VALID_STATUSES = new Set([
+  "open",
   "pending",
   "preparing",
   "ready",
@@ -90,6 +103,9 @@ async function ensureOrderSchema(): Promise<void> {
     await pool.query(
       "CREATE INDEX IF NOT EXISTS idx_orders_idempotency_key ON orders (idempotency_key)",
     );
+    await pool.query(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_idempotency_key_unique ON orders (idempotency_key) WHERE idempotency_key IS NOT NULL",
+    );
   })();
   await orderSchemaReady;
 }
@@ -122,11 +138,6 @@ type NormalizeUpdateResult =
     }
   | { ok: false; message: string };
 
-function derivePaymentStatus(paidAmount: number, totalAmount: number): string {
-  if (paidAmount <= 0) return "unpaid";
-  if (paidAmount < totalAmount) return "partially_paid";
-  return "paid";
-}
 
 function normalizeItems(items: unknown[]): NormalizedOrderItemInput[] {
   return items
@@ -167,22 +178,16 @@ function normalizeUpdate(data: Record<string, unknown>): NormalizeUpdateResult {
   if (typeof data.status === "string") {
     if (!VALID_STATUSES.has(data.status))
       return { ok: false, message: "Invalid order status." };
-    update.status = data.status;
-    if (data.status === "cancelled" && typeof data.paymentStatus !== "string")
-      update.paymentStatus = "cancelled";
+    update.status = dbOrderStatus(data.status);
   }
   if (typeof data.paymentStatus === "string") {
     if (!VALID_PAYMENT_STATUSES.has(data.paymentStatus))
       return { ok: false, message: "Invalid payment status." };
-    update.paymentStatus = data.paymentStatus;
-    if (data.paymentStatus === "paid" && !data.paidAt)
-      update.paidAt = new Date().toISOString();
-    if (data.paymentStatus === "unpaid") update.paidAmount = 0;
+    return { ok: false, message: "Payment status is derived from the payment ledger." };
   }
   if (typeof data.paymentMethod === "string") {
     if (!VALID_PAYMENT_METHODS.has(data.paymentMethod))
       return { ok: false, message: "Invalid payment method." };
-    update.paymentMethod = data.paymentMethod;
   }
   if (typeof data.notes === "string" || data.notes === null)
     update.notes = data.notes;
@@ -191,12 +196,10 @@ function normalizeUpdate(data: Record<string, unknown>): NormalizeUpdateResult {
   if (typeof data.tableId === "number" || data.tableId === null)
     update.tableId = data.tableId;
   if (data.paidAmount !== undefined) {
-    const paidAmount = Number(data.paidAmount);
-    if (!Number.isFinite(paidAmount) || Number.isNaN(paidAmount))
-      return { ok: false, message: "paidAmount must be a valid number." };
-    if (paidAmount < 0)
-      return { ok: false, message: "paidAmount cannot be negative." };
-    update.paidAmount = Math.round(paidAmount * 100) / 100;
+    return { ok: false, message: "Paid amount is derived from the payment ledger." };
+  }
+  if (data.totalAmount !== undefined) {
+    return { ok: false, message: "Order total is derived from item price snapshots." };
   }
   if (typeof data.paidAt === "string") {
     const paidAt = new Date(data.paidAt);
@@ -236,18 +239,158 @@ async function buildDbItems(
         statusCode: 400,
       });
     const quantity = Math.max(1, Number(item.quantity) || 1);
-    const subtotal = Math.round(product.price * quantity * 100) / 100;
-    totalAmount += subtotal;
-    enrichedItems.push({
+    const snapshot = buildOrderItemSnapshot({
       productId: item.productId,
       productName: product.name,
-      quantity,
       unitPrice: product.price,
-      subtotal,
+      quantity,
       notes: item.notes ?? null,
+    });
+    const subtotal = centsToAmount(snapshot.lineSubtotalCents);
+    totalAmount += subtotal;
+    enrichedItems.push({
+      productId: snapshot.productId,
+      productName: snapshot.productName,
+      quantity: snapshot.quantity,
+      unitPrice: centsToAmount(snapshot.unitPriceCents),
+      subtotal,
+      notes: snapshot.notes ?? null,
     });
   }
   return { enrichedItems, totalAmount: Math.round(totalAmount * 100) / 100 };
+}
+
+async function buildDbItemsWithClient(
+  client: { query: (text: string, params?: unknown[]) => Promise<{ rows: any[] }> },
+  items: Array<{ productId: number; quantity: number; notes?: string | null }>,
+) {
+  let totalAmount = 0;
+  const enrichedItems = [];
+  for (const item of items) {
+    const productResult = await client.query(
+      "SELECT id, name, price FROM products WHERE id = $1 LIMIT 1",
+      [item.productId],
+    );
+    const product = productResult.rows[0];
+    if (!product) {
+      throw Object.assign(new Error(`Product ${item.productId} not found`), {
+        statusCode: 400,
+        code: "VALIDATION_ERROR",
+      });
+    }
+    const quantity = Math.max(1, Number(item.quantity) || 1);
+    const snapshot = buildOrderItemSnapshot({
+      productId: item.productId,
+      productName: product.name,
+      unitPrice: Number(product.price),
+      quantity,
+      notes: item.notes ?? null,
+    });
+    const subtotal = centsToAmount(snapshot.lineSubtotalCents);
+    totalAmount += subtotal;
+    enrichedItems.push({
+      productId: snapshot.productId,
+      productName: snapshot.productName,
+      quantity: snapshot.quantity,
+      unitPrice: centsToAmount(snapshot.unitPriceCents),
+      subtotal,
+      notes: snapshot.notes ?? null,
+    });
+  }
+  return { enrichedItems, totalAmount: Math.round(totalAmount * 100) / 100 };
+}
+
+async function createDbOrderTransaction(input: {
+  orderData: Omit<ReturnType<typeof CreateOrderBody.parse>, "items">;
+  items: NormalizedOrderItemInput[];
+  idempotencyKey: string | null;
+  actor: ReturnType<typeof getRequestUser>;
+}) {
+  await ensureOrderSchema();
+  await ensurePaymentSchema();
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    if (input.idempotencyKey) {
+      const existing = await client.query(
+        "SELECT id FROM orders WHERE idempotency_key = $1 LIMIT 1",
+        [input.idempotencyKey],
+      );
+      if (existing.rows[0]?.id) {
+        await client.query("COMMIT");
+        return { order: await getDbOrder(Number(existing.rows[0].id)), replayed: true };
+      }
+    }
+
+    const { enrichedItems, totalAmount } = await buildDbItemsWithClient(client, input.items);
+    const orderResult = await client.query(
+      `INSERT INTO orders (customer_id, table_id, type, status, payment_status, payment_method, paid_amount, total_amount, notes, idempotency_key)
+       VALUES ($1, $2, $3, 'pending', 'unpaid', 'unpaid', 0, $4, $5, $6)
+       RETURNING id`,
+      [
+        input.orderData.customerId ?? null,
+        input.orderData.tableId ?? null,
+        dbOrderType(input.orderData.type ?? "dine_in"),
+        totalAmount,
+        input.orderData.notes ?? null,
+        input.idempotencyKey,
+      ],
+    );
+    const orderId = Number(orderResult.rows[0].id);
+    for (const item of enrichedItems) {
+      await client.query(
+        `INSERT INTO order_items (order_id, product_id, product_name, quantity, unit_price, subtotal, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [orderId, item.productId, item.productName, item.quantity, item.unitPrice, item.subtotal, item.notes],
+      );
+    }
+
+    if (input.orderData.tableId && dbOrderType(input.orderData.type ?? "dine_in") === "dine-in") {
+      await client.query(
+        "UPDATE tables SET status = 'occupied', updated_at = now() WHERE id = $1",
+        [input.orderData.tableId],
+      );
+    }
+
+    if (input.orderData.customerId) {
+      await client.query(
+        "INSERT INTO visits (customer_id, order_id, amount, order_type) VALUES ($1, $2, $3, $4)",
+        [input.orderData.customerId, orderId, totalAmount, dbOrderType(input.orderData.type ?? "dine_in")],
+      );
+      await client.query(
+        "UPDATE customers SET visit_count = visit_count + 1, total_spend = total_spend + $1 WHERE id = $2",
+        [totalAmount, input.orderData.customerId],
+      );
+    }
+
+    await writeAuditLog({
+      actor: input.actor,
+      action: "order.created",
+      entityType: "order",
+      entityId: orderId,
+      after: { id: orderId, totalAmount, itemCount: enrichedItems.length, tableId: input.orderData.tableId ?? null },
+      client,
+    });
+
+    await client.query("COMMIT");
+    return { order: await getDbOrder(orderId), replayed: false };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function syncTableAfterTerminalOrder(tableId: number | null | undefined) {
+  if (!tableId) return;
+  const active = await pool.query<{ count: string }>(
+    "SELECT COUNT(*)::int AS count FROM orders WHERE table_id = $1 AND type = 'dine-in' AND status = ANY($2::text[])",
+    [tableId, [...ACTIVE_DINE_IN_ORDER_STATUSES]],
+  );
+  if (Number(active.rows[0]?.count ?? 0) === 0) {
+    await pool.query("UPDATE tables SET status = 'cleaning', updated_at = now() WHERE id = $1 AND status = 'occupied'", [tableId]);
+  }
 }
 
 router.get("/orders", async (req, res, next): Promise<void> => {
@@ -288,16 +431,49 @@ router.get("/orders", async (req, res, next): Promise<void> => {
             .orderBy(sql`${ordersTable.createdAt} DESC`);
 
     const enrichedOrders = await Promise.all(
-      orders.map(async (order) => {
-        try {
-          const summary = await calculateOrderPaymentSummary(order.id);
-          return { ...order, ...summary };
-        } catch {
-          return { ...order, balance: Math.max(order.totalAmount - (order.paidAmount ?? 0), 0), paymentCount: 0 };
-        }
-      }),
+      orders.map(async (order) => ({
+        ...order,
+        ...(await calculateOrderPaymentSummary(order.id)),
+      })),
     );
     res.json(enrichedOrders);
+  } catch (error) {
+    next(error);
+  }
+});
+
+
+router.get("/orders/kds", async (_req, res, next): Promise<void> => {
+  if (!isDatabaseConfigured()) {
+    const orders = KDS_ACTIVE_ORDER_STATUSES.flatMap((status) => listRuntimeOrders({ status }));
+    res.json({
+      ok: true,
+      sourceOfTruth: "backend-order-domain",
+      activeStatuses: KDS_ACTIVE_ORDER_STATUSES,
+      total: orders.length,
+      columns: groupKdsOrdersByStatus(orders),
+      generatedAt: new Date().toISOString(),
+    });
+    return;
+  }
+
+  try {
+    await ensureOrderSchema();
+    const active = await pool.query<{ id: number }>(
+      "SELECT id FROM orders WHERE status = ANY($1::text[]) ORDER BY created_at ASC",
+      [[...KDS_ACTIVE_ORDER_STATUSES]],
+    );
+    const orders = (await Promise.all(active.rows.map((row) => getDbOrder(Number(row.id)))))
+      .filter((order): order is NonNullable<Awaited<ReturnType<typeof getDbOrder>>> => Boolean(order));
+
+    res.json({
+      ok: true,
+      sourceOfTruth: "backend-order-domain",
+      activeStatuses: KDS_ACTIVE_ORDER_STATUSES,
+      total: orders.length,
+      columns: groupKdsOrdersByStatus(orders),
+      generatedAt: new Date().toISOString(),
+    });
   } catch (error) {
     next(error);
   }
@@ -337,7 +513,7 @@ router.post("/orders", async (req, res, next): Promise<void> => {
   if (!isDatabaseConfigured()) {
     const order = createRuntimeOrder({
       ...orderData,
-      type: orderData.type ?? "dine-in",
+      type: dbOrderType(orderData.type ?? "dine_in"),
       items: normalizedItems,
       idempotencyKey,
     });
@@ -346,59 +522,16 @@ router.post("/orders", async (req, res, next): Promise<void> => {
   }
 
   try {
-    await ensureOrderSchema();
-    if (idempotencyKey) {
-      const existing = await pool.query(
-        "SELECT id FROM orders WHERE idempotency_key = $1 LIMIT 1",
-        [idempotencyKey],
-      );
-      if (existing.rows[0]?.id) {
-        const order = await getDbOrder(Number(existing.rows[0].id));
-        res.status(200).json(order);
-        return;
-      }
-    }
-
-    const { enrichedItems, totalAmount } = await buildDbItems(normalizedItems);
-    const [order] = await db
-      .insert(ordersTable)
-      .values({
-        ...orderData,
-        type: orderData.type ?? "dine-in",
-        paymentStatus: "unpaid",
-        paymentMethod: "unpaid",
-        paidAmount: 0,
-        totalAmount,
-        idempotencyKey,
-      })
-      .returning();
-
-    if (enrichedItems.length > 0) {
-      await db
-        .insert(orderItemsTable)
-        .values(enrichedItems.map((i) => ({ ...i, orderId: order.id })));
-    }
-
-    if (orderData.customerId) {
-      await db.insert(visitsTable).values({
-        customerId: orderData.customerId,
-        orderId: order.id,
-        amount: totalAmount,
-        orderType: orderData.type ?? "dine-in",
-      });
-      await db
-        .update(customersTable)
-        .set({
-          visitCount: sql`${customersTable.visitCount} + 1`,
-          totalSpend: sql`${customersTable.totalSpend} + ${totalAmount}`,
-        })
-        .where(eq(customersTable.id, orderData.customerId));
-    }
-
-    res.status(201).json(await getDbOrder(order.id));
+    const result = await createDbOrderTransaction({
+      orderData,
+      items: normalizedItems,
+      idempotencyKey,
+      actor: getRequestUser(req),
+    });
+    res.status(result.replayed ? 200 : 201).json(result.order);
   } catch (error: any) {
     if (error?.statusCode) {
-      sendError(res, error.statusCode, "ORDER_CREATE_INVALID", error.message);
+      sendError(res, error.statusCode, error.code ?? "ORDER_CREATE_INVALID", error.message);
       return;
     }
     next(error);
@@ -415,12 +548,8 @@ async function getDbOrder(id: number) {
     .select()
     .from(orderItemsTable)
     .where(eq(orderItemsTable.orderId, order.id));
-  try {
-    const paymentSummary = await calculateOrderPaymentSummary(order.id);
-    return { ...order, ...paymentSummary, items };
-  } catch {
-    return { ...order, balance: Math.max(order.totalAmount - (order.paidAmount ?? 0), 0), paymentCount: 0, items };
-  }
+  const paymentSummary = await calculateOrderPaymentSummary(order.id);
+  return { ...order, ...paymentSummary, items };
 }
 
 
@@ -431,7 +560,7 @@ router.get("/orders/:id/payments", async (req, res, next): Promise<void> => {
     return;
   }
   if (!isDatabaseConfigured()) {
-    sendError(res, 503, "DATABASE_REQUIRED", "Payment records require DATABASE_URL.");
+    sendError(res, 503, "DATABASE_UNAVAILABLE", "Payment records require DATABASE_URL.");
     return;
   }
   try {
@@ -469,7 +598,7 @@ router.post("/orders/:id/payments", async (req, res, next): Promise<void> => {
     return;
   }
   if (!isDatabaseConfigured()) {
-    sendError(res, 503, "DATABASE_REQUIRED", "Payment records require DATABASE_URL.");
+    sendError(res, 503, "DATABASE_UNAVAILABLE", "Payment records require DATABASE_URL.");
     return;
   }
   try {
@@ -481,12 +610,13 @@ router.post("/orders/:id/payments", async (req, res, next): Promise<void> => {
       note: typeof req.body?.note === "string" ? req.body.note : null,
       externalReference: typeof req.body?.externalReference === "string" ? req.body.externalReference : null,
       actor: user,
+      idempotencyKey: getIdempotencyKey(req),
     });
     const order = await getDbOrder(params.data.id);
     res.status(201).json({ ...result, order });
   } catch (error: any) {
     if (error?.statusCode) {
-      sendError(res, error.statusCode, "PAYMENT_CREATE_FAILED", error.message);
+      sendError(res, error.statusCode, error.code ?? "PAYMENT_CREATE_FAILED", error.message);
       return;
     }
     next(error);
@@ -554,7 +684,17 @@ router.patch("/orders/:id", async (req, res, next): Promise<void> => {
       return;
     }
 
-    let effectiveTotalAmount = existing.totalAmount;
+    if (typeof update.status === "string") {
+      assertOrderTransition(existing.status, update.status);
+      if (normalizeOrderStatus(update.status) === "cancelled") {
+        const summary = await calculateOrderPaymentSummary(existing.id);
+        const user = getRequestUser(req);
+        if (summary.paidAmount > 0 && user?.role !== "admin" && user?.role !== "manager") {
+          throw Object.assign(new Error("Only admin or manager can cancel a paid or partially paid order."), { statusCode: 403, code: "AUTH_FORBIDDEN" });
+        }
+      }
+    }
+
     if (items) {
       const { enrichedItems, totalAmount } = await buildDbItems(items);
       await db
@@ -564,39 +704,8 @@ router.patch("/orders/:id", async (req, res, next): Promise<void> => {
         .insert(orderItemsTable)
         .values(enrichedItems.map((i) => ({ ...i, orderId: params.data.id })));
       update.totalAmount = totalAmount;
-      effectiveTotalAmount = totalAmount;
     }
 
-    if (
-      typeof update.paidAmount === "number" &&
-      !["refunded", "cancelled"].includes(
-        String(update.paymentStatus ?? existing.paymentStatus),
-      )
-    ) {
-      update.paymentStatus = derivePaymentStatus(
-        update.paidAmount,
-        effectiveTotalAmount,
-      );
-      update.paidAt =
-        update.paymentStatus === "paid" ? new Date().toISOString() : null;
-    }
-    if (
-      update.paymentStatus === "paid" &&
-      typeof update.paidAmount !== "number"
-    ) {
-      update.paidAmount = Math.max(
-        existing.paidAmount ?? 0,
-        effectiveTotalAmount,
-      );
-      update.paidAt = new Date().toISOString();
-    }
-    if (update.paymentStatus === "unpaid") {
-      update.paidAmount = 0;
-      update.paidAt = null;
-    }
-    if (update.paymentStatus === "cancelled") {
-      update.paidAt = null;
-    }
 
     const beforeAudit = { ...existing };
     const [order] = await db
@@ -605,13 +714,16 @@ router.patch("/orders/:id", async (req, res, next): Promise<void> => {
       .where(eq(ordersTable.id, params.data.id))
       .returning();
 
-    if (items || typeof update.paidAmount === "number" || update.paymentStatus || update.paymentMethod) {
+    if (items || update.status === "cancelled" || update.status === "completed") {
       await syncOrderPaymentSummary(order.id, getRequestUser(req));
+      if (update.status === "cancelled" || update.status === "completed") {
+        await syncTableAfterTerminalOrder(existing.tableId);
+      }
     }
-    if (items || update.status === "cancelled") {
+    if (items || update.status === "cancelled" || update.status === "completed") {
       await writeAuditLog({
         actor: getRequestUser(req),
-        action: items ? "order.items_updated" : "order.cancelled",
+        action: items ? "order.items_updated" : update.status === "completed" ? "order.completed" : "order.cancelled",
         entityType: "order",
         entityId: order.id,
         before: beforeAudit,
@@ -621,7 +733,7 @@ router.patch("/orders/:id", async (req, res, next): Promise<void> => {
     res.json(await getDbOrder(order.id));
   } catch (error: any) {
     if (error?.statusCode) {
-      sendError(res, error.statusCode, "ORDER_UPDATE_INVALID", error.message);
+      sendError(res, error.statusCode, error.code ?? "ORDER_UPDATE_INVALID", error.message);
       return;
     }
     next(error);

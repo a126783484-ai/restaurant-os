@@ -32,7 +32,7 @@ router.get("/payments/summary", async (req, res, next): Promise<void> => {
     return;
   }
   if (!isDatabaseConfigured()) {
-    sendError(res, 503, "DATABASE_REQUIRED", "Payment closing summary requires DATABASE_URL.");
+    sendError(res, 503, "DATABASE_UNAVAILABLE", "Payment closing summary requires DATABASE_URL.");
     return;
   }
   try {
@@ -73,7 +73,7 @@ router.patch("/payments/:id", async (req, res, next): Promise<void> => {
     res.json(result);
   } catch (error: any) {
     if (error?.statusCode) {
-      sendError(res, error.statusCode, "PAYMENT_UPDATE_FAILED", error.message);
+      sendError(res, error.statusCode, error.code ?? "PAYMENT_UPDATE_FAILED", error.message);
       return;
     }
     next(error);
@@ -95,7 +95,7 @@ router.post("/payments/:id/refund", async (req, res, next): Promise<void> => {
     res.json(await setPaymentTerminalStatus({ paymentId: id, status: "refunded", actor: user }));
   } catch (error: any) {
     if (error?.statusCode) {
-      sendError(res, error.statusCode, "PAYMENT_REFUND_FAILED", error.message);
+      sendError(res, error.statusCode, error.code ?? "PAYMENT_REFUND_FAILED", error.message);
       return;
     }
     next(error);
@@ -117,7 +117,7 @@ router.post("/payments/:id/cancel", async (req, res, next): Promise<void> => {
     res.json(await setPaymentTerminalStatus({ paymentId: id, status: "cancelled", actor: user }));
   } catch (error: any) {
     if (error?.statusCode) {
-      sendError(res, error.statusCode, "PAYMENT_CANCEL_FAILED", error.message);
+      sendError(res, error.statusCode, error.code ?? "PAYMENT_CANCEL_FAILED", error.message);
       return;
     }
     next(error);

@@ -40,6 +40,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { useForm, Controller } from "react-hook-form";
 import { cn } from "@/lib/utils";
+import { getSafeErrorMessage } from "@/lib/api-errors";
 
 const ORDER_STATUS_LABELS: Record<string, string> = {
   pending: "待處理",
@@ -159,6 +160,8 @@ export default function Orders() {
     data: orders,
     isLoading,
     error,
+    refetch,
+    isFetching,
   } = useListOrders({
     status: orderStatusForApi,
     type: typeFilter !== "all" ? typeFilter : undefined,
@@ -195,7 +198,7 @@ export default function Orders() {
           order.paymentStatus === "paid" && order.status !== "cancelled",
       );
     if (statusFilter === "with_balance")
-      return list.filter((order) => Math.max(order.totalAmount - (order.paidAmount ?? 0), 0) > 0 && order.status !== "cancelled");
+      return list.filter((order) => (order.balance ?? 0) > 0 && order.status !== "cancelled");
     if (statusFilter === "active")
       return list.filter((order) =>
         ["pending", "preparing", "ready"].includes(order.status),
@@ -289,10 +292,10 @@ export default function Orders() {
           idempotencyRef.current = crypto.randomUUID();
           toast({ title: "訂單已建立" });
         },
-        onError: () =>
+        onError: (error) =>
           toast({
             title: "建立訂單失敗",
-            description: "請檢查品項或稍後再試。",
+            description: getSafeErrorMessage(error, "請檢查品項或稍後再試。"),
             variant: "destructive",
           }),
       },
@@ -400,8 +403,11 @@ export default function Orders() {
       </div>
 
       {error && (
-        <div className="rounded-3xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-bold text-destructive">
-          訂單 API 暫時無法讀取，請重新整理或稍後再試。
+        <div className="flex flex-col gap-3 rounded-3xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-bold text-destructive sm:flex-row sm:items-center sm:justify-between">
+          <span>{getSafeErrorMessage(error, "訂單 API 暫時無法讀取，請重新整理或稍後再試。")}</span>
+          <Button type="button" variant="outline" className="min-h-10 rounded-2xl" onClick={() => refetch()} disabled={isFetching}>
+            {isFetching ? "重試中…" : "重試"}
+          </Button>
         </div>
       )}
 
@@ -428,10 +434,8 @@ export default function Orders() {
           </div>
         ) : displayedOrders.length > 0 ? (
           displayedOrders.map((order) => {
-            const paidAmount =
-              order.paidAmount ??
-              (order.paymentStatus === "paid" ? order.totalAmount : 0);
-            const balance = Math.max(order.totalAmount - paidAmount, 0);
+            const paidAmount = order.paidAmount ?? 0;
+            const balance = order.balance ?? 0;
             return (
               <div
                 key={order.id}
@@ -530,10 +534,8 @@ export default function Orders() {
           ))
         ) : displayedOrders.length > 0 ? (
           displayedOrders.map((order) => {
-            const paidAmount =
-              order.paidAmount ??
-              (order.paymentStatus === "paid" ? order.totalAmount : 0);
-            const balance = Math.max(order.totalAmount - paidAmount, 0);
+            const paidAmount = order.paidAmount ?? 0;
+            const balance = order.balance ?? 0;
             return (
               <article
                 key={order.id}

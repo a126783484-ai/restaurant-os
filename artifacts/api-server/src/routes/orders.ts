@@ -38,6 +38,7 @@ import {
   KDS_ACTIVE_ORDER_STATUSES,
   groupKdsOrdersByStatus,
 } from "../lib/order-domain-service";
+import { listKdsDbOrders } from "../lib/kds-resilience";
 import {
   assertOrderTransition,
   buildOrderItemSnapshot,
@@ -71,6 +72,146 @@ const VALID_PAYMENT_METHODS = new Set([
   "external",
 ]);
 let orderSchemaReady: Promise<void> | null = null;
+
+
+type Queryable = { query: (text: string, params?: unknown[]) => Promise<{ rows: any[] }> };
+
+function roundMoney(value: unknown): number {
+  const amount = Number(value ?? 0);
+  return Number.isFinite(amount) ? Math.round(amount * 100) / 100 : 0;
+}
+
+async function syncTableAfterTerminalOrderWithClient(client: Queryable, tableId: number | null | undefined) {
+  if (!tableId) return;
+  const active = await client.query(
+    "SELECT COUNT(*)::int AS count FROM orders WHERE table_id = $1 AND type = 'dine-in' AND status = ANY($2::text[])",
+    [tableId, [...ACTIVE_DINE_IN_ORDER_STATUSES]],
+  );
+  if (Number(active.rows[0]?.count ?? 0) === 0) {
+    await client.query("UPDATE tables SET status = 'cleaning', updated_at = now() WHERE id = $1 AND status = 'occupied'", [tableId]);
+  }
+}
+
+async function writeOperationalAuditLog(input: Parameters<typeof writeAuditLog>[0]): Promise<void> {
+  const client = input.client as Queryable | undefined;
+  try {
+    if (client) await client.query("SAVEPOINT order_status_audit");
+    await writeAuditLog(input);
+    if (client) await client.query("RELEASE SAVEPOINT order_status_audit");
+  } catch (error) {
+    if (client) await client.query("ROLLBACK TO SAVEPOINT order_status_audit").catch(() => undefined);
+    console.error("[orders] audit log write failed during status update", {
+      action: input.action,
+      entityId: input.entityId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function getDbOrderWithClient(client: Queryable, id: number) {
+  const orderResult = await client.query(
+    `SELECT id, customer_id, table_id, type, status, payment_status, payment_method, paid_amount,
+            total_amount, payment_note, paid_at, notes, created_at
+       FROM orders
+      WHERE id = $1`,
+    [id],
+  );
+  const order = orderResult.rows[0];
+  if (!order) return null;
+  const itemResult = await client.query(
+    `SELECT id, order_id, product_id, product_name, quantity, unit_price, subtotal, notes
+       FROM order_items
+      WHERE order_id = $1
+      ORDER BY created_at ASC, id ASC`,
+    [id],
+  );
+  const totalAmount = roundMoney(order.total_amount);
+  const paidAmount = roundMoney(order.paid_amount);
+  return {
+    id: Number(order.id),
+    customerId: order.customer_id == null ? null : Number(order.customer_id),
+    tableId: order.table_id == null ? null : Number(order.table_id),
+    type: String(order.type ?? "dine-in"),
+    status: String(order.status ?? "pending"),
+    paymentStatus: String(order.payment_status ?? "unpaid"),
+    paymentMethod: order.payment_method ?? null,
+    paidAmount,
+    totalAmount,
+    balance: Math.max(roundMoney(totalAmount - paidAmount), 0),
+    paymentNote: order.payment_note ?? null,
+    paidAt: order.paid_at ? (order.paid_at instanceof Date ? order.paid_at.toISOString() : new Date(String(order.paid_at)).toISOString()) : null,
+    notes: order.notes ?? null,
+    createdAt: order.created_at instanceof Date ? order.created_at.toISOString() : new Date(String(order.created_at)).toISOString(),
+    items: itemResult.rows.map((item) => ({
+      id: Number(item.id),
+      orderId: Number(item.order_id),
+      productId: Number(item.product_id),
+      productName: String(item.product_name ?? ""),
+      quantity: Number(item.quantity ?? 0),
+      unitPrice: roundMoney(item.unit_price),
+      subtotal: roundMoney(item.subtotal),
+      notes: item.notes ?? null,
+    })),
+  };
+}
+
+async function updateDbOrderStatusOnly(input: {
+  id: number;
+  status: string;
+  actor: ReturnType<typeof getRequestUser>;
+}) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const existingResult = await client.query(
+      `SELECT id, table_id, status
+         FROM orders
+        WHERE id = $1
+        FOR UPDATE`,
+      [input.id],
+    );
+    const existing = existingResult.rows[0];
+    if (!existing) {
+      throw Object.assign(new Error("Order not found."), { statusCode: 404, code: "ORDER_NOT_FOUND" });
+    }
+
+    assertOrderTransition(existing.status, input.status);
+
+    await client.query(
+      `UPDATE orders
+          SET status = $1, updated_at = now()
+        WHERE id = $2`,
+      [input.status, input.id],
+    );
+
+    if (input.status === "completed") {
+      await syncTableAfterTerminalOrderWithClient(client, existing.table_id == null ? null : Number(existing.table_id));
+    }
+
+    const updated = await getDbOrderWithClient(client, input.id);
+    if (!updated) {
+      throw Object.assign(new Error("Order not found after update."), { statusCode: 404, code: "ORDER_NOT_FOUND" });
+    }
+
+    await writeOperationalAuditLog({
+      actor: input.actor,
+      action: input.status === "completed" ? "order.completed" : "order.status_updated",
+      entityType: "order",
+      entityId: input.id,
+      before: { id: Number(existing.id), status: String(existing.status), tableId: existing.table_id == null ? null : Number(existing.table_id) },
+      after: updated,
+      client,
+    });
+
+    await client.query("COMMIT");
+    return updated;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 
 function sendError(
   res: Response,
@@ -458,13 +599,7 @@ router.get("/orders/kds", async (_req, res, next): Promise<void> => {
   }
 
   try {
-    await ensureOrderSchema();
-    const active = await pool.query<{ id: number }>(
-      "SELECT id FROM orders WHERE status = ANY($1::text[]) ORDER BY created_at ASC",
-      [[...KDS_ACTIVE_ORDER_STATUSES]],
-    );
-    const orders = (await Promise.all(active.rows.map((row) => getDbOrder(Number(row.id)))))
-      .filter((order): order is NonNullable<Awaited<ReturnType<typeof getDbOrder>>> => Boolean(order));
+    const orders = await listKdsDbOrders(pool);
 
     res.json({
       ok: true,
@@ -681,6 +816,17 @@ router.patch("/orders/:id", async (req, res, next): Promise<void> => {
 
   try {
     await ensureOrderSchema();
+    const updateKeys = Object.keys(update);
+    if (!items && updateKeys.length === 1 && typeof update.status === "string" && normalizeOrderStatus(update.status) !== "cancelled") {
+      const order = await updateDbOrderStatusOnly({
+        id: params.data.id,
+        status: update.status,
+        actor: getRequestUser(req),
+      });
+      res.json(order);
+      return;
+    }
+
     const existing = await getDbOrder(params.data.id);
     if (!existing) {
       sendError(res, 404, "ORDER_NOT_FOUND", "Order not found.");

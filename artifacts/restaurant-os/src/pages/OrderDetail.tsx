@@ -164,6 +164,7 @@ export default function OrderDetail() {
   const [editingPaymentId, setEditingPaymentId] = useState<number | null>(null);
   const [editPaymentNote, setEditPaymentNote] = useState("");
   const [editPaymentReference, setEditPaymentReference] = useState("");
+  const [updateRecoveryMessage, setUpdateRecoveryMessage] = useState<string | null>(null);
 
   const {
     data: order,
@@ -255,22 +256,34 @@ export default function OrderDetail() {
   };
 
   const update = (data: Record<string, unknown>, success = "訂單已更新") => {
+    setUpdateRecoveryMessage(null);
     updateOrder.mutate(
       { id: orderId, data },
       {
         onSuccess: () => {
           refreshQueries();
+          setUpdateRecoveryMessage(null);
           toast({ title: success });
         },
-        onError: (updateError) =>
+        onError: async (updateError) => {
+          const message = getSafeErrorMessage(updateError, "訂單更新逾時或失敗，正在重新讀取後端狀態。");
+          setUpdateRecoveryMessage(`${message} 正在重新讀取訂單，確認後端是否已套用更新。`);
+          const latest = await refetch();
+          queryClient.invalidateQueries({ queryKey: getListOrdersQueryKey() });
+          const requestedStatus = typeof data.status === "string" ? data.status : null;
+          if (requestedStatus && latest.data?.status === requestedStatus) {
+            setUpdateRecoveryMessage(`更新請求回報失敗或逾時，但後端目前已顯示狀態：${ORDER_STATUS_LABELS[requestedStatus] ?? requestedStatus}。`);
+          } else if (requestedStatus && latest.data) {
+            setUpdateRecoveryMessage(`更新未確認成功。後端目前狀態：${ORDER_STATUS_LABELS[latest.data.status] ?? latest.data.status}，請確認後再重試。`);
+          } else {
+            setUpdateRecoveryMessage("更新未確認成功，且重新讀取訂單失敗。請稍後重試或返回訂單列表確認。");
+          }
           toast({
-            title: "更新失敗",
-            description:
-              updateError instanceof Error
-                ? updateError.message
-                : "請稍後再試或重新整理頁面。",
+            title: "更新失敗或逾時",
+            description: `${message} 已重新讀取訂單狀態供你確認。`,
             variant: "destructive",
-          }),
+          });
+        },
       },
     );
   };
@@ -396,6 +409,15 @@ export default function OrderDetail() {
           </Button>
         </Link>
       </div>
+
+      {updateRecoveryMessage && (
+        <div className="rounded-3xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-100">
+          {updateRecoveryMessage}
+          <Button variant="outline" size="sm" className="mt-3 min-h-10 rounded-2xl sm:ml-3 sm:mt-0" onClick={() => refetch()} disabled={isFetching}>
+            {isFetching ? "重新確認中…" : "重新確認訂單"}
+          </Button>
+        </div>
+      )}
 
       <section className="relative overflow-hidden rounded-[2rem] border border-card-border bg-card p-5 shadow-sm sm:p-6">
         <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-primary/10 blur-3xl" />

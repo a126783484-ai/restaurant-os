@@ -40,6 +40,8 @@ export type ClosingOrder = {
   balance: number;
   paymentCount: number;
   createdAt: string;
+  paymentSummaryUnavailable?: boolean;
+  paymentSummaryErrorMessage?: string;
 };
 
 export type ClosingSummary = {
@@ -64,6 +66,8 @@ export type ClosingSummary = {
   partiallyPaidOrderList: ClosingOrder[];
   paidOrderList: ClosingOrder[];
   payments: PaymentRecord[];
+  partial?: boolean;
+  degradedOrderCount?: number;
 };
 
 export function getOrderPayments(orderId: number) {

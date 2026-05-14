@@ -66,7 +66,7 @@ function OrderList({ title, orders, tone }: { title: string; orders: ClosingOrde
             <Link key={order.id} href={`/orders/${order.id}`}>
               <div className="cursor-pointer rounded-2xl border border-border p-3 transition-colors hover:bg-muted/50">
                 <div className="flex items-center justify-between gap-2"><p className="font-black">#{order.id} · {TYPE_LABELS[order.type] ?? order.type}{order.tableId ? ` · ${order.tableId}桌` : ""}</p><Badge className={cn("border-0", tone)}>{STATUS_LABELS[order.paymentStatus] ?? order.paymentStatus}</Badge></div>
-                <div className="mt-2 grid grid-cols-3 gap-2 text-xs"><span>合計 <b>{formatMoney(order.totalAmount)}</b></span><span>已收 <b className="text-emerald-600">{formatMoney(order.paidAmount)}</b></span><span>餘額 <b className="text-red-600">{formatMoney(order.balance)}</b></span></div>
+                {order.paymentSummaryUnavailable ? <p className="mt-2 text-xs font-black text-amber-700">付款摘要暫時無法讀取</p> : <div className="mt-2 grid grid-cols-3 gap-2 text-xs"><span>合計 <b>{formatMoney(order.totalAmount)}</b></span><span>已收 <b className="text-emerald-600">{formatMoney(order.paidAmount)}</b></span><span>餘額 <b className="text-red-600">{formatMoney(order.balance)}</b></span></div>}
               </div>
             </Link>
           ))}
@@ -102,6 +102,7 @@ export default function Closing() {
       </section>
 
       {error && <div className="flex flex-col gap-3 rounded-3xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-bold text-destructive sm:flex-row sm:items-center sm:justify-between"><span>{getSafeErrorMessage(error, "日結 API 無法讀取，請確認登入角色為 admin / manager 或稍後重試。")}</span><Button variant="outline" className="min-h-10 rounded-2xl" onClick={() => refetch()}>{isLoading ? "重試中…" : "重試"}</Button></div>}
+      {data?.partial && <div className="flex flex-col gap-3 rounded-3xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800 sm:flex-row sm:items-center sm:justify-between"><span>日結資料為部分降級：{data.degradedOrderCount ?? 0} 筆訂單的付款摘要暫時無法讀取，統計已排除不可驗證的付款狀態。</span><Button variant="outline" className="min-h-10 rounded-2xl" onClick={() => refetch()}>重試</Button></div>}
       {isLoading ? <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="h-28 animate-pulse rounded-3xl bg-muted" />)}</div> : data && <>
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <Metric label="今日應收" value={formatMoney(data.totalReceivable)} icon={ReceiptText} />

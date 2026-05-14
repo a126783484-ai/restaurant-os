@@ -91,6 +91,15 @@ type EditableItem = {
   notes?: string | null;
 };
 
+type PaymentSummaryDegraded = {
+  paymentSummaryUnavailable?: boolean;
+  paymentSummaryErrorMessage?: string;
+};
+
+function isPaymentSummaryUnavailable(order: unknown): order is PaymentSummaryDegraded {
+  return Boolean((order as PaymentSummaryDegraded | null)?.paymentSummaryUnavailable);
+}
+
 function formatMoney(value: number) {
   return new Intl.NumberFormat("zh-TW", {
     style: "currency",
@@ -227,8 +236,10 @@ export default function OrderDetail() {
   }, [order]);
 
   const paymentSummary = paymentsQuery.data;
+  const orderSummaryUnavailable = isPaymentSummaryUnavailable(order);
+  const paymentSummaryUnavailable = orderSummaryUnavailable || Boolean(paymentsQuery.error);
   const paidAmountFromLedger = paymentSummary?.paidAmount ?? order?.paidAmount ?? 0;
-  const effectivePaymentStatus = paymentSummary?.paymentStatus ?? order?.paymentStatus ?? "unpaid";
+  const effectivePaymentStatus = paymentSummaryUnavailable ? (order?.paymentStatus ?? "unpaid") : (paymentSummary?.paymentStatus ?? order?.paymentStatus ?? "unpaid");
   const balance = paymentSummary?.balance ?? order?.balance ?? 0;
 
   useEffect(() => {
@@ -334,7 +345,25 @@ export default function OrderDetail() {
     return (
       <div className="mx-auto max-w-6xl space-y-4 p-4 sm:p-6">
         <div className="h-11 w-32 animate-pulse rounded-2xl bg-muted" />
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {orderSummaryUnavailable && (
+        <div className="flex flex-col gap-2 rounded-3xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800 sm:flex-row sm:items-center sm:justify-between">
+          <span>付款摘要暫時無法讀取，已先顯示訂單保存的金額狀態。</span>
+          <Button variant="outline" className="min-h-10 rounded-2xl" onClick={() => refetch()} disabled={isFetching}>
+            {isFetching ? "重試中…" : "重試"}
+          </Button>
+        </div>
+      )}
+
+      {paymentsQuery.error && (
+        <div className="flex flex-col gap-2 rounded-3xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800 sm:flex-row sm:items-center sm:justify-between">
+          <span>{getSafeErrorMessage(paymentsQuery.error, "付款紀錄暫時無法讀取，頁面仍可查看訂單明細。")}</span>
+          <Button variant="outline" className="min-h-10 rounded-2xl" onClick={() => paymentsQuery.refetch()} disabled={paymentsQuery.isFetching}>
+            {paymentsQuery.isFetching ? "重試中…" : "重試付款摘要"}
+          </Button>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {Array.from({ length: 3 }).map((_, index) => (
             <div
               key={index}

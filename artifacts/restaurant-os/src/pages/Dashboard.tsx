@@ -276,6 +276,8 @@ export default function Dashboard() {
     void refetchActivity();
   };
 
+  const summaryPartial = Boolean((summary as { partial?: boolean } | undefined)?.partial);
+  const degradedOrderCount = (summary as { degradedOrderCount?: number } | undefined)?.degradedOrderCount ?? 0;
   const pendingOrders = summary?.pendingOrders ?? 0;
   const activeReservations = summary?.activeReservations ?? 0;
   const todayOrders = summary?.todayOrders ?? 0;
@@ -335,6 +337,15 @@ export default function Dashboard() {
           </span>
           <button type="button" className="min-h-10 rounded-2xl border border-amber-300 px-4 text-sm font-black" onClick={retryAll} disabled={summaryFetching}>
             {summaryFetching ? "重試中…" : "重試全部"}
+          </button>
+        </div>
+      )}
+
+      {summaryPartial && (
+        <div className="flex flex-col gap-3 rounded-3xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+          <span>Dashboard 資料為部分降級：{degradedOrderCount} 筆訂單的付款摘要暫時無法讀取。</span>
+          <button type="button" className="min-h-10 rounded-2xl border border-amber-300 px-4 text-sm font-black" onClick={() => refetchSummary()} disabled={summaryFetching}>
+            {summaryFetching ? "重試中…" : "重試 Dashboard"}
           </button>
         </div>
       )}

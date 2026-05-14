@@ -10,7 +10,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "smoke:v3-core": "node ./test/v3-core-smoke.mjs",
     "smoke:db-runtime": "node ./test/db-runtime-smoke.mjs",
-    "smoke:v3-business": "node ./test/v3-business-smoke.mjs"
+    "smoke:v3-business": "node ./test/v3-business-smoke.mjs",
+    "repair:v3-production-data": "node ./scripts/repair-v3-production-data.mjs --dry-run",
+    "smoke:orders-resilience": "node --experimental-strip-types ./test/orders-resilience-smoke.mjs"
   },
   "dependencies": {
     "@workspace/api-zod": "workspace:*",

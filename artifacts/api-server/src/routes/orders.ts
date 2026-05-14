@@ -32,6 +32,7 @@ import {
   listRuntimeOrders,
   updateRuntimeOrder,
 } from "../lib/one-store-runtime";
+import { attachResilientPaymentSummary } from "../lib/order-payment-resilience";
 import {
   ACTIVE_DINE_IN_ORDER_STATUSES,
   KDS_ACTIVE_ORDER_STATUSES,
@@ -431,10 +432,9 @@ router.get("/orders", async (req, res, next): Promise<void> => {
             .orderBy(sql`${ordersTable.createdAt} DESC`);
 
     const enrichedOrders = await Promise.all(
-      orders.map(async (order) => ({
-        ...order,
-        ...(await calculateOrderPaymentSummary(order.id)),
-      })),
+      orders.map((order) =>
+        attachResilientPaymentSummary(order, calculateOrderPaymentSummary),
+      ),
     );
     res.json(enrichedOrders);
   } catch (error) {
@@ -548,8 +548,11 @@ async function getDbOrder(id: number) {
     .select()
     .from(orderItemsTable)
     .where(eq(orderItemsTable.orderId, order.id));
-  const paymentSummary = await calculateOrderPaymentSummary(order.id);
-  return { ...order, ...paymentSummary, items };
+  const orderWithPaymentSummary = await attachResilientPaymentSummary(
+    order,
+    calculateOrderPaymentSummary,
+  );
+  return { ...orderWithPaymentSummary, items };
 }
 
 

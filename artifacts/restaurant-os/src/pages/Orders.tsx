@@ -88,6 +88,20 @@ interface OrderFormValues {
   notes: string;
 }
 
+type PaymentSummaryDegraded = {
+  paymentSummaryUnavailable?: boolean;
+  paymentSummaryErrorMessage?: string;
+};
+
+function isPaymentSummaryUnavailable(order: unknown): order is PaymentSummaryDegraded {
+  return Boolean((order as PaymentSummaryDegraded | null)?.paymentSummaryUnavailable);
+}
+
+function safeMoney(value: unknown): number {
+  const amount = Number(value ?? 0);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("zh-TW", {
     style: "currency",
@@ -219,10 +233,10 @@ export default function Orders() {
         ["pending", "preparing", "ready"].includes(o.status),
       ).length,
       unpaid: list.filter(
-        (o) => o.paymentStatus !== "paid" && o.status !== "cancelled",
+        (o) => !isPaymentSummaryUnavailable(o) && o.paymentStatus !== "paid" && o.status !== "cancelled",
       ).length,
       revenue: list.reduce(
-        (sum, o) => sum + (o.status === "cancelled" ? 0 : o.totalAmount),
+        (sum, o) => sum + (o.status === "cancelled" || isPaymentSummaryUnavailable(o) ? 0 : safeMoney(o.totalAmount)),
         0,
       ),
     };
@@ -434,8 +448,9 @@ export default function Orders() {
           </div>
         ) : displayedOrders.length > 0 ? (
           displayedOrders.map((order) => {
-            const paidAmount = order.paidAmount ?? 0;
-            const balance = order.balance ?? 0;
+            const paidAmount = safeMoney(order.paidAmount);
+            const balance = safeMoney(order.balance);
+            const summaryUnavailable = isPaymentSummaryUnavailable(order);
             return (
               <div
                 key={order.id}
@@ -468,21 +483,26 @@ export default function Orders() {
                 >
                   {ORDER_STATUS_LABELS[order.status] ?? order.status}
                 </Badge>
-                <Badge
-                  className={cn(
-                    "w-24 border-0 text-center text-[10px]",
-                    PAY_STATUS_COLORS[order.paymentStatus] ??
-                      "bg-muted text-muted-foreground",
-                  )}
-                >
-                  {PAY_STATUS_LABELS[order.paymentStatus] ??
-                    order.paymentStatus}
-                </Badge>
+                {summaryUnavailable && (
+                  <span className="w-24 text-xs font-black text-amber-600">付款摘要暫時無法讀取</span>
+                )}
+                {!summaryUnavailable && (
+                  <Badge
+                    className={cn(
+                      "w-24 border-0 text-center text-[10px]",
+                      PAY_STATUS_COLORS[order.paymentStatus] ??
+                        "bg-muted text-muted-foreground",
+                    )}
+                  >
+                    {PAY_STATUS_LABELS[order.paymentStatus] ??
+                      order.paymentStatus}
+                  </Badge>
+                )}
                 <span className="w-24 text-right text-sm font-black text-foreground">
-                  ${order.totalAmount.toFixed(2)}
+                  ${safeMoney(order.totalAmount).toFixed(2)}
                 </span>
                 <span className="w-24 text-right text-sm font-black text-emerald-600">
-                  ${paidAmount.toFixed(2)}
+                  {summaryUnavailable ? "—" : `$${paidAmount.toFixed(2)}`}
                 </span>
                 <span
                   className={cn(
@@ -490,9 +510,9 @@ export default function Orders() {
                     balance > 0 ? "text-red-600" : "text-muted-foreground",
                   )}
                 >
-                  ${balance.toFixed(2)}
+                  {summaryUnavailable ? "—" : `$${balance.toFixed(2)}`}
                 </span>
-                <span className="w-16 text-right text-xs font-black text-muted-foreground">{order.paymentCount ?? 0} 筆</span>
+                <span className="w-16 text-right text-xs font-black text-muted-foreground">{summaryUnavailable ? "—" : `${order.paymentCount ?? 0} 筆`}</span>
                 <div className="flex w-32 justify-end gap-2">
                   <Link href={`/orders/${order.id}`}>
                     <Button
@@ -534,8 +554,9 @@ export default function Orders() {
           ))
         ) : displayedOrders.length > 0 ? (
           displayedOrders.map((order) => {
-            const paidAmount = order.paidAmount ?? 0;
-            const balance = order.balance ?? 0;
+            const paidAmount = safeMoney(order.paidAmount);
+            const balance = safeMoney(order.balance);
+            const summaryUnavailable = isPaymentSummaryUnavailable(order);
             return (
               <article
                 key={order.id}
@@ -556,7 +577,7 @@ export default function Orders() {
                     </p>
                   </div>
                   <p className="text-lg font-black text-foreground">
-                    ${order.totalAmount.toFixed(0)}
+                    ${safeMoney(order.totalAmount).toFixed(0)}
                   </p>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
@@ -584,20 +605,20 @@ export default function Orders() {
                     {order.tableId ? ` · ${order.tableId} 桌` : ""}
                   </span>
                   <span className="rounded-full bg-muted px-2.5 py-1 text-[10px] font-black text-muted-foreground">
-                    {order.paymentCount ?? 0} 筆付款
+                    {summaryUnavailable ? "付款摘要暫時無法讀取" : `${order.paymentCount ?? 0} 筆付款`}
                   </span>
                 </div>
                 <div className="mt-4 grid grid-cols-3 gap-2 rounded-2xl bg-muted/50 p-3 text-center text-xs">
                   <div>
                     <p className="text-muted-foreground">合計</p>
                     <p className="font-black text-foreground">
-                      ${order.totalAmount.toFixed(0)}
+                      ${safeMoney(order.totalAmount).toFixed(0)}
                     </p>
                   </div>
                   <div>
                     <p className="text-muted-foreground">已收</p>
                     <p className="font-black text-emerald-600">
-                      ${paidAmount.toFixed(0)}
+                      {summaryUnavailable ? "—" : `$${paidAmount.toFixed(0)}`}
                     </p>
                   </div>
                   <div>
@@ -608,7 +629,7 @@ export default function Orders() {
                         balance > 0 ? "text-red-600" : "text-muted-foreground",
                       )}
                     >
-                      ${balance.toFixed(0)}
+                      {summaryUnavailable ? "—" : `$${balance.toFixed(0)}`}
                     </p>
                   </div>
                 </div>

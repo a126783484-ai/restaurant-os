@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Link } from "wouter";
 import {
   useListOrders,
@@ -9,7 +9,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, ShoppingBag, ChevronRight, Minus } from "lucide-react";
+import { Plus, ShoppingBag, ChevronRight, Minus, Clock, DollarSign, ChefHat, CheckCircle2, Filter } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -61,6 +61,33 @@ interface OrderFormValues {
   notes: string;
 }
 
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat("zh-TW", { style: "currency", currency: "TWD", maximumFractionDigits: 0 }).format(value);
+}
+
+function StatCard({ label, value, icon: Icon, tone = "default" }: { label: string; value: string; icon: React.ElementType; tone?: "default" | "warning" | "success" | "primary" }) {
+  const toneClass = {
+    default: "bg-card",
+    warning: "bg-amber-500/5 border-amber-500/20",
+    success: "bg-emerald-500/5 border-emerald-500/20",
+    primary: "bg-primary/5 border-primary/20",
+  }[tone];
+
+  return (
+    <div className={cn("rounded-3xl border border-card-border p-4 shadow-sm", toneClass)}>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
+          <p className="mt-1 text-xl font-black text-foreground">{value}</p>
+        </div>
+        <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+          <Icon className="h-4 w-4" />
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export default function Orders() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -80,6 +107,16 @@ export default function Orders() {
 
   const { register, handleSubmit, control, reset } = useForm<OrderFormValues>({ defaultValues: { type: "dine-in", tableId: "__none__", notes: "" } });
 
+  const stats = useMemo(() => {
+    const list = orders ?? [];
+    return {
+      total: list.length,
+      active: list.filter(o => ["pending", "preparing", "ready"].includes(o.status)).length,
+      unpaid: list.filter(o => o.paymentStatus !== "paid" && o.status !== "cancelled").length,
+      revenue: list.reduce((sum, o) => sum + (o.status === "cancelled" ? 0 : o.totalAmount), 0),
+    };
+  }, [orders]);
+
   const addItem = (productId: number) => {
     const product = products?.find(p => p.id === productId);
     if (!product) return;
@@ -96,6 +133,12 @@ export default function Orders() {
 
   const total = orderItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
 
+  const closeCreateDialog = () => {
+    setShowCreate(false);
+    setOrderItems([]);
+    reset();
+  };
+
   const onSubmit = (data: OrderFormValues) => {
     if (orderItems.length === 0) { toast({ title: "請至少新增一項商品", variant: "destructive" }); return; }
     createOrder.mutate(
@@ -111,9 +154,7 @@ export default function Orders() {
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListOrdersQueryKey() });
-          setShowCreate(false);
-          setOrderItems([]);
-          reset();
+          closeCreateDialog();
           idempotencyRef.current = crypto.randomUUID();
           toast({ title: "訂單已建立" });
         },
@@ -123,91 +164,142 @@ export default function Orders() {
   };
 
   return (
-    <div className="p-4 sm:p-6 space-y-5 max-w-5xl mx-auto overflow-x-hidden">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-foreground">訂單管理</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">{isLoading ? "載入中…" : `共 ${orders?.length ?? 0} 筆訂單`}</p>
+    <div className="mx-auto max-w-6xl space-y-5 overflow-x-hidden p-4 sm:p-6">
+      <section className="relative overflow-hidden rounded-[2rem] border border-border bg-card p-5 shadow-sm sm:p-6">
+        <div className="pointer-events-none absolute -right-14 -top-20 h-52 w-52 rounded-full bg-primary/15 blur-3xl" />
+        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-black text-primary">
+              <ShoppingBag className="h-3.5 w-3.5" /> Order Command
+            </div>
+            <h1 className="mt-3 text-2xl font-black tracking-tight text-foreground sm:text-3xl">訂單管理</h1>
+            <p className="mt-1 text-sm text-muted-foreground">現場開單、狀態追蹤、付款檢查與訂單明細入口。</p>
+          </div>
+          <Button data-testid="button-new-order" onClick={() => setShowCreate(true)} className="min-h-12 rounded-2xl gap-2 px-5 text-sm font-black">
+            <Plus className="h-4 w-4" /> 新增訂單
+          </Button>
         </div>
-        <Button data-testid="button-new-order" onClick={() => setShowCreate(true)} size="sm" className="gap-1.5 min-h-11">
-          <Plus className="h-4 w-4" /> 新增訂單
-        </Button>
+      </section>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard label="目前筆數" value={isLoading ? "—" : String(stats.total)} icon={ShoppingBag} tone="primary" />
+        <StatCard label="進行中" value={isLoading ? "—" : String(stats.active)} icon={ChefHat} tone={stats.active > 0 ? "warning" : "success"} />
+        <StatCard label="未結清" value={isLoading ? "—" : String(stats.unpaid)} icon={Clock} tone={stats.unpaid > 0 ? "warning" : "success"} />
+        <StatCard label="篩選金額" value={isLoading ? "—" : formatCurrency(stats.revenue)} icon={DollarSign} />
       </div>
 
-      <div className="flex gap-3 flex-wrap">
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger data-testid="select-order-status" className="w-36">
-            <SelectValue placeholder="所有狀態" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">所有狀態</SelectItem>
-            {Object.entries(ORDER_STATUS_LABELS).map(([val, label]) => (
-              <SelectItem key={val} value={val}>{label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={typeFilter} onValueChange={setTypeFilter}>
-          <SelectTrigger data-testid="select-order-type" className="w-36">
-            <SelectValue placeholder="所有類型" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">所有類型</SelectItem>
-            <SelectItem value="dine-in">內用</SelectItem>
-            <SelectItem value="takeout">外帶</SelectItem>
-          </SelectContent>
-        </Select>
+      <div className="rounded-3xl border border-border bg-card p-3 shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2 text-sm font-black text-foreground">
+            <Filter className="h-4 w-4 text-primary" /> 快速篩選
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger data-testid="select-order-status" className="min-h-11 w-full rounded-2xl sm:w-40">
+                <SelectValue placeholder="所有狀態" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">所有狀態</SelectItem>
+                {Object.entries(ORDER_STATUS_LABELS).map(([val, label]) => (
+                  <SelectItem key={val} value={val}>{label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={typeFilter} onValueChange={setTypeFilter}>
+              <SelectTrigger data-testid="select-order-type" className="min-h-11 w-full rounded-2xl sm:w-40">
+                <SelectValue placeholder="所有類型" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">所有類型</SelectItem>
+                <SelectItem value="dine-in">內用</SelectItem>
+                <SelectItem value="takeout">外帶</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
       </div>
 
       {error && (
-        <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        <div className="rounded-3xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-bold text-destructive">
           訂單 API 暫時無法讀取，請重新整理或稍後再試。
         </div>
       )}
 
-      <div className="bg-card border border-card-border rounded-xl overflow-hidden">
-        <div className="flex items-center gap-3 px-5 py-2.5 bg-muted/40 border-b border-border text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-          <span className="w-12">訂單</span>
-          <span className="flex-1">類型</span>
-          <span className="hidden sm:block w-24">狀態</span>
-          <span className="hidden sm:block w-24">付款</span>
-          <span className="w-20 text-right">金額</span>
+      <div className="hidden overflow-hidden rounded-3xl border border-card-border bg-card shadow-sm md:block">
+        <div className="flex items-center gap-3 border-b border-border bg-muted/40 px-5 py-3 text-xs font-black uppercase tracking-wider text-muted-foreground">
+          <span className="w-16">訂單</span>
+          <span className="flex-1">類型 / 時間</span>
+          <span className="w-24">狀態</span>
+          <span className="w-24">付款</span>
+          <span className="w-24 text-right">金額</span>
           <span className="w-4" />
         </div>
         {isLoading ? (
           <div className="divide-y divide-border">
-            {Array.from({ length: 5 }).map((_, i) => <div key={i} className="h-14 animate-pulse bg-muted/20 m-1 rounded" />)}
+            {Array.from({ length: 5 }).map((_, i) => <div key={i} className="m-2 h-16 animate-pulse rounded-2xl bg-muted/40" />)}
           </div>
         ) : orders && orders.length > 0 ? (
           orders.map(order => (
             <Link key={order.id} href={`/orders/${order.id}`}>
-              <div data-testid={`row-order-${order.id}`} className="flex items-center gap-3 px-4 sm:px-5 py-3.5 hover:bg-muted/50 transition-colors cursor-pointer border-b border-border last:border-b-0">
-                <span className="w-12 text-sm font-mono font-semibold text-muted-foreground">#{order.id}</span>
+              <div data-testid={`row-order-${order.id}`} className="flex cursor-pointer items-center gap-3 border-b border-border px-5 py-4 transition-colors last:border-b-0 hover:bg-muted/50">
+                <span className="w-16 font-mono text-sm font-black text-muted-foreground">#{order.id}</span>
                 <div className="flex-1">
-                  <p className="text-sm font-medium text-foreground">{ORDER_TYPE_LABELS[order.type] ?? order.type}</p>
+                  <p className="text-sm font-black text-foreground">{ORDER_TYPE_LABELS[order.type] ?? order.type}{order.tableId ? ` · ${order.tableId} 桌` : ""}</p>
                   <p className="text-xs text-muted-foreground">{new Date(order.createdAt).toLocaleString("zh-TW", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</p>
                 </div>
-                <Badge className={cn("hidden sm:block text-[10px] border-0 w-24 text-center", ORDER_STATUS_COLORS[order.status] ?? "bg-muted text-muted-foreground")}>
-                  {ORDER_STATUS_LABELS[order.status] ?? order.status}
-                </Badge>
-                <Badge className={cn("hidden sm:block text-[10px] border-0 w-24 text-center", PAY_STATUS_COLORS[order.paymentStatus] ?? "bg-muted text-muted-foreground")}>
-                  {PAY_STATUS_LABELS[order.paymentStatus] ?? order.paymentStatus}
-                </Badge>
-                <span className="w-20 text-right text-sm font-semibold text-foreground">${order.totalAmount.toFixed(2)}</span>
-                <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                <Badge className={cn("w-24 border-0 text-center text-[10px]", ORDER_STATUS_COLORS[order.status] ?? "bg-muted text-muted-foreground")}>{ORDER_STATUS_LABELS[order.status] ?? order.status}</Badge>
+                <Badge className={cn("w-24 border-0 text-center text-[10px]", PAY_STATUS_COLORS[order.paymentStatus] ?? "bg-muted text-muted-foreground")}>{PAY_STATUS_LABELS[order.paymentStatus] ?? order.paymentStatus}</Badge>
+                <span className="w-24 text-right text-sm font-black text-foreground">${order.totalAmount.toFixed(2)}</span>
+                <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
               </div>
             </Link>
           ))
         ) : (
           <div className="py-16 text-center">
-            <ShoppingBag className="h-10 w-10 text-muted-foreground mx-auto mb-3 opacity-40" />
-            <p className="text-sm font-medium text-foreground">找不到訂單</p>
-            <p className="text-xs text-muted-foreground mt-1">建立新訂單以開始使用</p>
+            <ShoppingBag className="mx-auto mb-3 h-10 w-10 text-muted-foreground opacity-40" />
+            <p className="text-sm font-black text-foreground">找不到訂單</p>
+            <p className="mt-1 text-xs text-muted-foreground">建立新訂單以開始使用</p>
           </div>
         )}
       </div>
 
-      <Dialog open={showCreate} onOpenChange={open => { if (!open) { setOrderItems([]); reset(); } setShowCreate(open); }}>
-        <DialogContent className="w-[calc(100vw-2rem)] max-w-2xl max-h-[90vh] overflow-y-auto">
+      <div className="space-y-3 md:hidden">
+        {isLoading ? (
+          Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-36 animate-pulse rounded-3xl bg-muted" />)
+        ) : orders && orders.length > 0 ? (
+          orders.map(order => (
+            <Link key={order.id} href={`/orders/${order.id}`}>
+              <article className="rounded-3xl border border-card-border bg-card p-4 shadow-sm active:scale-[0.99]">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xl font-black text-foreground">#{order.id}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{new Date(order.createdAt).toLocaleString("zh-TW", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</p>
+                  </div>
+                  <p className="text-lg font-black text-foreground">${order.totalAmount.toFixed(0)}</p>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Badge className={cn("border-0 text-[10px]", ORDER_STATUS_COLORS[order.status] ?? "bg-muted text-muted-foreground")}>{ORDER_STATUS_LABELS[order.status] ?? order.status}</Badge>
+                  <Badge className={cn("border-0 text-[10px]", PAY_STATUS_COLORS[order.paymentStatus] ?? "bg-muted text-muted-foreground")}>{PAY_STATUS_LABELS[order.paymentStatus] ?? order.paymentStatus}</Badge>
+                  <span className="rounded-full bg-muted px-2.5 py-1 text-[10px] font-black text-muted-foreground">{ORDER_TYPE_LABELS[order.type] ?? order.type}{order.tableId ? ` · ${order.tableId} 桌` : ""}</span>
+                </div>
+                <div className="mt-4 flex items-center justify-between border-t border-border pt-3 text-sm font-black text-primary">
+                  查看明細
+                  <ChevronRight className="h-4 w-4" />
+                </div>
+              </article>
+            </Link>
+          ))
+        ) : (
+          <div className="rounded-3xl border border-card-border bg-card py-16 text-center shadow-sm">
+            <ShoppingBag className="mx-auto mb-3 h-10 w-10 text-muted-foreground opacity-40" />
+            <p className="text-sm font-black text-foreground">找不到訂單</p>
+            <p className="mt-1 text-xs text-muted-foreground">建立新訂單以開始使用</p>
+          </div>
+        )}
+      </div>
+
+      <Dialog open={showCreate} onOpenChange={open => { if (!open) { closeCreateDialog(); } else { setShowCreate(true); } }}>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-2xl max-h-[90vh] overflow-y-auto rounded-3xl">
           <DialogHeader><DialogTitle>新增訂單</DialogTitle></DialogHeader>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 pt-2">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -215,7 +307,7 @@ export default function Orders() {
                 <label className="text-sm font-medium">訂單類型</label>
                 <Controller control={control} name="type" render={({ field }) => (
                   <Select value={field.value} onValueChange={field.onChange}>
-                    <SelectTrigger data-testid="select-order-type-new"><SelectValue /></SelectTrigger>
+                    <SelectTrigger data-testid="select-order-type-new" className="min-h-11 rounded-2xl"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="dine-in">內用</SelectItem>
                       <SelectItem value="takeout">外帶</SelectItem>
@@ -227,7 +319,7 @@ export default function Orders() {
                 <label className="text-sm font-medium">桌次</label>
                 <Controller control={control} name="tableId" render={({ field }) => (
                   <Select value={field.value} onValueChange={field.onChange}>
-                    <SelectTrigger data-testid="select-order-table"><SelectValue placeholder="選擇桌次" /></SelectTrigger>
+                    <SelectTrigger data-testid="select-order-table" className="min-h-11 rounded-2xl"><SelectValue placeholder="選擇桌次" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__none__">無桌次</SelectItem>
                       {(tables ?? []).map(t => (
@@ -241,21 +333,21 @@ export default function Orders() {
 
             <div className="space-y-1.5">
               <label className="text-sm font-medium">新增品項</label>
-              <div className="border border-border rounded-lg divide-y divide-border max-h-48 overflow-y-auto">
+              <div className="max-h-56 overflow-y-auto rounded-2xl border border-border divide-y divide-border">
                 {(products ?? []).filter(p => p.available).map(p => (
-                  <div key={p.id} className="flex items-center gap-3 px-3 py-2.5">
+                  <div key={p.id} className="flex items-center gap-3 px-3 py-3">
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{p.name}</p>
+                      <p className="text-sm font-black truncate">{p.name}</p>
                       <p className="text-xs text-muted-foreground">{p.category} — ${p.price.toFixed(2)}</p>
                     </div>
                     <div className="flex items-center gap-1.5">
-                      <Button type="button" variant="outline" size="icon" className="h-9 w-9" onClick={() => removeItem(p.id)}>
+                      <Button type="button" variant="outline" size="icon" className="h-10 w-10 rounded-2xl" onClick={() => removeItem(p.id)}>
                         <Minus className="h-3 w-3" />
                       </Button>
-                      <span className="text-sm w-5 text-center font-medium">
+                      <span className="text-sm w-5 text-center font-black">
                         {orderItems.find(i => i.productId === p.id)?.quantity ?? 0}
                       </span>
-                      <Button type="button" variant="outline" size="icon" className="h-9 w-9" onClick={() => addItem(p.id)} data-testid={`button-add-item-${p.id}`}>
+                      <Button type="button" variant="outline" size="icon" className="h-10 w-10 rounded-2xl" onClick={() => addItem(p.id)} data-testid={`button-add-item-${p.id}`}>
                         <Plus className="h-3 w-3" />
                       </Button>
                     </div>
@@ -265,14 +357,14 @@ export default function Orders() {
             </div>
 
             {orderItems.length > 0 && (
-              <div className="bg-muted/50 rounded-lg p-3 space-y-1.5">
+              <div className="rounded-2xl bg-muted/50 p-3 space-y-1.5">
                 {orderItems.map(i => (
                   <div key={i.productId} className="flex justify-between text-sm">
                     <span>{i.name} x{i.quantity}</span>
-                    <span className="font-medium">${(i.price * i.quantity).toFixed(2)}</span>
+                    <span className="font-bold">${(i.price * i.quantity).toFixed(2)}</span>
                   </div>
                 ))}
-                <div className="flex justify-between text-sm font-bold pt-1.5 border-t border-border">
+                <div className="flex justify-between text-sm font-black pt-1.5 border-t border-border">
                   <span>合計</span>
                   <span>${total.toFixed(2)}</span>
                 </div>
@@ -281,11 +373,11 @@ export default function Orders() {
 
             <div className="space-y-1.5">
               <label className="text-sm font-medium">備註</label>
-              <Input data-testid="input-order-notes" placeholder="特殊需求…" {...register("notes")} />
+              <Input data-testid="input-order-notes" placeholder="特殊需求…" className="min-h-11 rounded-2xl" {...register("notes")} />
             </div>
             <DialogFooter className="gap-2 sm:gap-0">
-              <Button className="min-h-11" type="button" variant="outline" onClick={() => { setShowCreate(false); setOrderItems([]); reset(); }}>取消</Button>
-              <Button className="min-h-11" data-testid="button-submit-order" type="submit" disabled={createOrder.isPending || orderItems.length === 0}>
+              <Button className="min-h-11 rounded-2xl" type="button" variant="outline" onClick={closeCreateDialog}>取消</Button>
+              <Button className="min-h-11 rounded-2xl font-black" data-testid="button-submit-order" type="submit" disabled={createOrder.isPending || orderItems.length === 0}>
                 {createOrder.isPending ? "建立中…" : `建立訂單（$${total.toFixed(2)}）`}
               </Button>
             </DialogFooter>

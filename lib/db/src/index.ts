@@ -43,14 +43,14 @@ function createDatabaseClient(): DatabaseClient {
     return state.db;
   }
 
-  // Vercel creates many short-lived serverless instances. A per-instance pool of 3+
-  // can quickly exhaust the Supabase pooler and cause auth/login timeouts. Keep the
-  // default conservative; production can still override via DB_POOL_MAX if needed.
+  // Vercel serverless functions must fail fast. Waiting 10–30 seconds for Supabase
+  // pooler connection attempts can turn normal API errors into 504 blank-screen
+  // failures. Keep a single connection per instance and a short connection timeout.
   state.pool = new Pool({
     connectionString: databaseUrl,
     max: numberFromEnv("DB_POOL_MAX", 1),
     idleTimeoutMillis: numberFromEnv("DB_IDLE_TIMEOUT_MS", 1_000),
-    connectionTimeoutMillis: numberFromEnv("DB_CONNECTION_TIMEOUT_MS", 30_000),
+    connectionTimeoutMillis: numberFromEnv("DB_CONNECTION_TIMEOUT_MS", 3_000),
     allowExitOnIdle: true,
     ssl: databaseUrl.includes("supabase.com") || databaseUrl.includes("pooler.supabase.com")
       ? { rejectUnauthorized: false }
@@ -95,7 +95,7 @@ export function getDatabaseRuntimeStatus() {
     configured: Boolean(databaseUrl),
     initialized: Boolean(state.db && state.pool),
     poolMax: numberFromEnv("DB_POOL_MAX", 1),
-    connectionTimeoutMillis: numberFromEnv("DB_CONNECTION_TIMEOUT_MS", 30_000),
+    connectionTimeoutMillis: numberFromEnv("DB_CONNECTION_TIMEOUT_MS", 3_000),
     idleTimeoutMillis: numberFromEnv("DB_IDLE_TIMEOUT_MS", 1_000),
     initError: state.initError,
   };

@@ -1,4 +1,4 @@
-import { Switch, Route, Router as WouterRouter, Redirect, useLocation } from "wouter";
+import { Switch, Route, Router as WouterRouter, Redirect } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -26,10 +26,6 @@ import { createContext, useContext, type ReactNode } from "react";
 
 // NOTE: setAuthTokenGetter + setBaseUrl 已在 main.tsx 的 configureApiClient() 完成設定，勿重複
 
-// ── AuthContext ──────────────────────────────────────────────────────────────
-// useAuthSession 只在 AuthProvider 呼叫一次，所有子元件透過 context 共享，
-// 避免每個 ProtectedPage 各自打 /api/auth/me 造成重複驗證與 redirect 迴圈。
-
 type AuthSessionValue = ReturnType<typeof useAuthSession>;
 const AuthSessionContext = createContext<AuthSessionValue | null>(null);
 
@@ -47,7 +43,6 @@ function useSharedAuthSession(): AuthSessionValue {
   if (!ctx) throw new Error("useSharedAuthSession must be used inside AuthProvider");
   return ctx;
 }
-// ────────────────────────────────────────────────────────────────────────────
 
 function makeQueryClient() {
   return new QueryClient({
@@ -63,8 +58,6 @@ function makeQueryClient() {
         onError: (error) => {
           if (error instanceof ApiError && error.status === 401) {
             clearToken();
-            // 用 history.replaceState 避免整頁重載破壞 React 狀態，
-            // wouter 會偵測到 popstate/pushstate 並重新渲染路由。
             window.history.replaceState(null, "", `${import.meta.env.BASE_URL}login`);
             window.dispatchEvent(new PopStateEvent("popstate"));
           }
@@ -88,7 +81,6 @@ function AccessDenied({ message }: { message: string }) {
 }
 
 function AuthGuard({ children, roles }: { children: React.ReactNode; roles?: AuthRole[] }) {
-  // 使用共享 context，不再各自呼叫 useAuthSession()
   const { user, loading, error } = useSharedAuthSession();
 
   if (loading) {

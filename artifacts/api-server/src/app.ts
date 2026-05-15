@@ -143,9 +143,30 @@ const defaultCorsOrigins = [
 
 const allowedCorsOrigins = new Set([...defaultCorsOrigins, ...configuredCorsOrigins]);
 
+function isAllowedVercelFrontendOrigin(origin: string): boolean {
+  try {
+    const { hostname, protocol } = new URL(origin);
+    return (
+      protocol === "https:" &&
+      hostname.endsWith(".vercel.app") &&
+      (
+        hostname.startsWith("restaurant-os-restaurant-") ||
+        hostname.startsWith("restaurant-os-restaurant-os-")
+      )
+    );
+  } catch {
+    return false;
+  }
+}
+
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || allowedCorsOrigins.has(origin) || !isProductionRuntime()) {
+    if (
+      !origin ||
+      allowedCorsOrigins.has(origin) ||
+      isAllowedVercelFrontendOrigin(origin) ||
+      !isProductionRuntime()
+    ) {
       callback(null, true);
       return;
     }
@@ -180,32 +201,27 @@ app.get("/api/status", (_req, res) => {
   });
 });
 
-async function loadApplicationRoutes() {
-  try {
-    const routerModule = await import("./routes");
-    app.use("/api", routerModule.default);
-    app.use(notFoundHandler);
-    app.use(errorHandler);
-    routesLoaded = true;
-    logger.info("Application routes loaded");
-  } catch (err) {
-    routesLoaded = false;
-    routesLoadError = err instanceof Error ? err.message : String(err);
-    logger.error(err, "Failed to load application routes");
-    app.use("/api", (_req, res) => {
-      res.status(503).json({
-        ok: false,
-        error: { code: "ROUTES_UNAVAILABLE", message: "API routes failed to load" },
-        message: routesLoadError,
-        databaseUrl: getSafeDatabaseUrlDiagnostic(),
-        timestamp: new Date().toISOString(),
-      });
-    });
-    app.use(notFoundHandler);
-    app.use(errorHandler);
-  }
-}
+app.get("/api/health", (_req, res) => {
+  res.status(200).json({
+    ok: true,
+    service: "restaurant-os-api-server",
+    routesLoaded,
+    routesLoadError,
+    timestamp: new Date().toISOString(),
+  });
+});
 
-void loadApplicationRoutes();
+import("./routes")
+  .then(({ default: routes }) => {
+    app.use("/api", routes);
+    routesLoaded = true;
+  })
+  .catch((err) => {
+    routesLoadError = err instanceof Error ? err.message : String(err);
+    logger.error({ err }, "failed to load api routes");
+  });
+
+app.use(notFoundHandler);
+app.use(errorHandler);
 
 export default app;

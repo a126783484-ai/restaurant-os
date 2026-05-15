@@ -17,6 +17,11 @@ export type KdsColumn = {
   orders: KdsOrder[];
 };
 
+export type KdsBoardError = {
+  code: string;
+  message: string;
+};
+
 export type KdsBoard = {
   ok: boolean;
   sourceOfTruth: "backend-order-domain";
@@ -24,8 +29,30 @@ export type KdsBoard = {
   total: number;
   columns: KdsColumn[];
   generatedAt: string;
+  degraded?: boolean;
+  error?: KdsBoardError;
 };
 
-export function getKdsBoard() {
-  return customFetch<KdsBoard>("/api/orders/kds", { method: "GET" });
+function isKdsBoardPayload(value: unknown): value is KdsBoard {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<KdsBoard>;
+  return (
+    candidate.sourceOfTruth === "backend-order-domain" &&
+    Array.isArray(candidate.activeStatuses) &&
+    Array.isArray(candidate.columns) &&
+    typeof candidate.total === "number" &&
+    typeof candidate.generatedAt === "string"
+  );
+}
+
+export async function getKdsBoard() {
+  try {
+    return await customFetch<KdsBoard>("/api/orders/kds", { method: "GET" });
+  } catch (error) {
+    const data = error && typeof error === "object" ? (error as { data?: unknown }).data : undefined;
+    if (isKdsBoardPayload(data)) {
+      return data;
+    }
+    throw error;
+  }
 }

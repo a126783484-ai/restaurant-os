@@ -38,15 +38,19 @@ function getSafeDatabaseUrlDiagnostic() {
 }
 
 function isDatabaseConnectionError(message: string): boolean {
+  const normalized = message.toLowerCase();
   return [
-    "ENOTFOUND",
-    "ECONNREFUSED",
+    "enotfound",
+    "econnrefused",
+    "econnreset",
+    "etimedout",
     "timeout",
     "tenant/user",
     "password authentication failed",
-    "Connection terminated",
-    "database",
-  ].some((pattern) => message.includes(pattern));
+    "connection terminated",
+    "terminating connection",
+    "database unavailable",
+  ].some((pattern) => normalized.includes(pattern));
 }
 
 const requestContextMiddleware: RequestHandler = (req, res, next) => {

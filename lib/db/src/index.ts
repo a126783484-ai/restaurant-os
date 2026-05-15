@@ -59,7 +59,7 @@ function numberFromEnv(name: string, fallback: number): number {
 }
 
 function connectionTimeoutMillis(): number {
-  return numberFromEnv("DB_CONNECTION_TIMEOUT_MS", 1_500);
+  return numberFromEnv("DB_CONNECTION_TIMEOUT_MS", 5_000);
 }
 
 function idleTimeoutMillis(): number {
@@ -67,7 +67,7 @@ function idleTimeoutMillis(): number {
 }
 
 function queryTimeoutMillis(): number {
-  return numberFromEnv("DB_QUERY_TIMEOUT_MS", 2_000);
+  return numberFromEnv("DB_QUERY_TIMEOUT_MS", 5_000);
 }
 
 function poolMax(): number {
@@ -75,33 +75,66 @@ function poolMax(): number {
 }
 
 function circuitBreakerMillis(): number {
-  return numberFromEnv("DB_CIRCUIT_BREAKER_MS", 15_000);
+  return numberFromEnv("DB_CIRCUIT_BREAKER_MS", 5_000);
+}
+
+function isDatabaseAvailabilityCode(code: unknown): boolean {
+  if (typeof code !== "string") return false;
+  return (
+    code === "DATABASE_UNAVAILABLE" ||
+    code === "ENOTFOUND" ||
+    code === "ECONNREFUSED" ||
+    code === "ECONNRESET" ||
+    code === "ETIMEDOUT" ||
+    code === "EPIPE" ||
+    code === "53300" || // too_many_connections
+    code === "57P01" || // admin_shutdown
+    code === "57P02" || // crash_shutdown
+    code === "57P03" || // cannot_connect_now
+    code.startsWith("08") // PostgreSQL connection exception class
+  );
 }
 
 function isDatabaseErrorMessage(message: string): boolean {
+  const normalized = message.toLowerCase();
   return [
-    "ENOTFOUND",
-    "ECONNREFUSED",
-    "ETIMEDOUT",
+    "enotfound",
+    "econnrefused",
+    "econnreset",
+    "etimedout",
     "timeout",
     "tenant/user",
     "password authentication failed",
-    "Connection terminated",
-    "Database unavailable",
-    "DATABASE_URL",
-    "database",
-  ].some((pattern) => message.includes(pattern));
+    "connection terminated",
+    "terminating connection",
+    "database unavailable",
+    "database_url",
+  ].some((pattern) => normalized.includes(pattern));
 }
 
 export function isDatabaseUnavailableError(error: unknown): boolean {
   if (error instanceof DatabaseUnavailableError) return true;
   const code = typeof error === "object" && error !== null ? (error as { code?: unknown }).code : undefined;
-  if (code === "DATABASE_UNAVAILABLE") return true;
+  if (isDatabaseAvailabilityCode(code)) return true;
   const message = error instanceof Error ? error.message : String(error);
   return isDatabaseErrorMessage(message);
 }
 
+function resetDatabasePoolAfterError(): void {
+  const stalePool = state.pool;
+  state.pool = null;
+  state.db = null;
+  state.databaseUrl = null;
+
+  if (stalePool) {
+    void stalePool.end().catch((endError) => {
+      console.error("Failed to close stale database pool after connection error", endError);
+    });
+  }
+}
+
 function recordDatabaseError(error: unknown): DatabaseUnavailableError {
+  resetDatabasePoolAfterError();
   const message = error instanceof Error ? error.message : String(error);
   const now = new Date().toISOString();
   state.initError = message;
@@ -141,7 +174,10 @@ function withTimeout<T>(operation: Promise<T>, label: string, timeoutMs = queryT
       return value;
     })
     .catch((error) => {
-      throw recordDatabaseError(error);
+      if (isDatabaseUnavailableError(error)) {
+        throw recordDatabaseError(error);
+      }
+      throw error;
     })
     .finally(() => {
       if (timer) clearTimeout(timer);
@@ -212,10 +248,10 @@ function createDatabaseClient(): DatabaseClient {
     return state.db;
   }
 
-  // Vercel serverless functions must fail fast. Waiting 10–30 seconds for Supabase
-  // pooler connection attempts can turn normal API errors into 504 blank-screen
-  // failures. Keep a single connection per instance, short connection/query timeouts,
-  // and a circuit breaker so repeated requests recover quickly with structured 503s.
+  // Vercel serverless functions must fail predictably. Keep one connection per
+  // instance with bounded connection/query timeouts, and use a short circuit
+  // breaker so repeated failures return structured 503s without keeping a stale
+  // pool pinned after the breaker closes.
   state.pool = patchPool(new Pool({
     connectionString: databaseUrl,
     max: poolMax(),

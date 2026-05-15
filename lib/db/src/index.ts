@@ -44,7 +44,10 @@ export class DatabaseUnavailableError extends Error {
   readonly code = "DATABASE_UNAVAILABLE";
   readonly statusCode = 503;
 
-  constructor(message = "Database unavailable. Please retry shortly.", cause?: unknown) {
+  constructor(
+    message = "Database unavailable. Please retry shortly.",
+    cause?: unknown,
+  ) {
     super(message);
     this.name = "DatabaseUnavailableError";
     if (cause !== undefined) {
@@ -59,7 +62,7 @@ function numberFromEnv(name: string, fallback: number): number {
 }
 
 function connectionTimeoutMillis(): number {
-  return numberFromEnv("DB_CONNECTION_TIMEOUT_MS", 5_000);
+  return numberFromEnv("DB_CONNECTION_TIMEOUT_MS", 1_500);
 }
 
 function idleTimeoutMillis(): number {
@@ -67,7 +70,7 @@ function idleTimeoutMillis(): number {
 }
 
 function queryTimeoutMillis(): number {
-  return numberFromEnv("DB_QUERY_TIMEOUT_MS", 5_000);
+  return numberFromEnv("DB_QUERY_TIMEOUT_MS", 2_000);
 }
 
 function poolMax(): number {
@@ -75,7 +78,7 @@ function poolMax(): number {
 }
 
 function circuitBreakerMillis(): number {
-  return numberFromEnv("DB_CIRCUIT_BREAKER_MS", 5_000);
+  return numberFromEnv("DB_CIRCUIT_BREAKER_MS", 15_000);
 }
 
 function isDatabaseAvailabilityCode(code: unknown): boolean {
@@ -114,7 +117,10 @@ function isDatabaseErrorMessage(message: string): boolean {
 
 export function isDatabaseUnavailableError(error: unknown): boolean {
   if (error instanceof DatabaseUnavailableError) return true;
-  const code = typeof error === "object" && error !== null ? (error as { code?: unknown }).code : undefined;
+  const code =
+    typeof error === "object" && error !== null
+      ? (error as { code?: unknown }).code
+      : undefined;
   if (isDatabaseAvailabilityCode(code)) return true;
   const message = error instanceof Error ? error.message : String(error);
   return isDatabaseErrorMessage(message);
@@ -128,7 +134,10 @@ function resetDatabasePoolAfterError(): void {
 
   if (stalePool) {
     void stalePool.end().catch((endError) => {
-      console.error("Failed to close stale database pool after connection error", endError);
+      console.error(
+        "Failed to close stale database pool after connection error",
+        endError,
+      );
     });
   }
 }
@@ -144,7 +153,10 @@ function recordDatabaseError(error: unknown): DatabaseUnavailableError {
   state.circuitReason = message;
   return error instanceof DatabaseUnavailableError
     ? error
-    : new DatabaseUnavailableError("Database unavailable. Please retry shortly.", error);
+    : new DatabaseUnavailableError(
+        "Database unavailable. Please retry shortly.",
+        error,
+      );
 }
 
 function assertCircuitClosed(): void {
@@ -160,11 +172,19 @@ function assertCircuitClosed(): void {
   }
 }
 
-function withTimeout<T>(operation: Promise<T>, label: string, timeoutMs = queryTimeoutMillis()): Promise<T> {
+function withTimeout<T>(
+  operation: Promise<T>,
+  label: string,
+  timeoutMs = queryTimeoutMillis(),
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
-      reject(new DatabaseUnavailableError(`${label} timed out after ${timeoutMs}ms.`));
+      reject(
+        new DatabaseUnavailableError(
+          `${label} timed out after ${timeoutMs}ms.`,
+        ),
+      );
     }, timeoutMs);
   });
 
@@ -184,7 +204,6 @@ function withTimeout<T>(operation: Promise<T>, label: string, timeoutMs = queryT
     });
 }
 
-
 function patchPoolClient(client: pg.PoolClient): pg.PoolClient {
   const originalQuery = client.query.bind(client) as pg.PoolClient["query"];
 
@@ -196,7 +215,10 @@ function patchPoolClient(client: pg.PoolClient): pg.PoolClient {
       if (typeof lastArg === "function") {
         return originalQuery(...args);
       }
-      return withTimeout(Promise.resolve(originalQuery(...args) as unknown), "Database transaction query") as unknown;
+      return withTimeout(
+        Promise.resolve(originalQuery(...args) as unknown),
+        "Database transaction query",
+      ) as unknown;
     },
   });
 
@@ -204,7 +226,9 @@ function patchPoolClient(client: pg.PoolClient): pg.PoolClient {
 }
 
 function patchPool(poolInstance: pg.Pool): pg.Pool {
-  const originalQuery = poolInstance.query.bind(poolInstance) as pg.Pool["query"];
+  const originalQuery = poolInstance.query.bind(
+    poolInstance,
+  ) as pg.Pool["query"];
   const originalConnect = poolInstance.connect.bind(poolInstance);
 
   Object.defineProperty(poolInstance, "query", {
@@ -215,7 +239,10 @@ function patchPool(poolInstance: pg.Pool): pg.Pool {
       if (typeof lastArg === "function") {
         return originalQuery(...args);
       }
-      return withTimeout(Promise.resolve(originalQuery(...args) as unknown), "Database query") as unknown;
+      return withTimeout(
+        Promise.resolve(originalQuery(...args) as unknown),
+        "Database query",
+      ) as unknown;
     },
   });
 
@@ -227,9 +254,14 @@ function patchPool(poolInstance: pg.Pool): pg.Pool {
       if (typeof lastArg === "function") {
         return originalConnect(...args);
       }
-      const connectPromise = originalConnect(...args) as unknown as Promise<pg.PoolClient>;
-      return withTimeout(Promise.resolve(connectPromise), "Database connect", connectionTimeoutMillis())
-        .then((client) => patchPoolClient(client));
+      const connectPromise = originalConnect(
+        ...args,
+      ) as unknown as Promise<pg.PoolClient>;
+      return withTimeout(
+        Promise.resolve(connectPromise),
+        "Database connect",
+        connectionTimeoutMillis(),
+      ).then((client) => patchPoolClient(client));
     },
   });
 
@@ -252,16 +284,20 @@ function createDatabaseClient(): DatabaseClient {
   // instance with bounded connection/query timeouts, and use a short circuit
   // breaker so repeated failures return structured 503s without keeping a stale
   // pool pinned after the breaker closes.
-  state.pool = patchPool(new Pool({
-    connectionString: databaseUrl,
-    max: poolMax(),
-    idleTimeoutMillis: idleTimeoutMillis(),
-    connectionTimeoutMillis: connectionTimeoutMillis(),
-    allowExitOnIdle: true,
-    ssl: databaseUrl.includes("supabase.com") || databaseUrl.includes("pooler.supabase.com")
-      ? { rejectUnauthorized: false }
-      : undefined,
-  }));
+  state.pool = patchPool(
+    new Pool({
+      connectionString: databaseUrl,
+      max: poolMax(),
+      idleTimeoutMillis: idleTimeoutMillis(),
+      connectionTimeoutMillis: connectionTimeoutMillis(),
+      allowExitOnIdle: true,
+      ssl:
+        databaseUrl.includes("supabase.com") ||
+        databaseUrl.includes("pooler.supabase.com")
+          ? { rejectUnauthorized: false }
+          : undefined,
+    }),
+  );
 
   state.pool.on("error", (err) => {
     recordDatabaseError(err);
@@ -297,14 +333,21 @@ export function isDatabaseConfigured(): boolean {
   return Boolean(databaseUrl);
 }
 
-export async function checkDatabaseConnection(): Promise<{ ok: true; latencyMs: number } | { ok: false; error: string; latencyMs: number }> {
+export async function checkDatabaseConnection(): Promise<
+  | { ok: true; latencyMs: number }
+  | { ok: false; error: string; latencyMs: number }
+> {
   const started = Date.now();
   try {
     await pool.query("SELECT 1 AS ok");
     return { ok: true, latencyMs: Date.now() - started };
   } catch (error) {
     const normalized = recordDatabaseError(error);
-    return { ok: false, error: normalized.message, latencyMs: Date.now() - started };
+    return {
+      ok: false,
+      error: normalized.message,
+      latencyMs: Date.now() - started,
+    };
   }
 }
 
@@ -318,8 +361,12 @@ export function getDatabaseRuntimeStatus() {
     queryTimeoutMillis: queryTimeoutMillis(),
     idleTimeoutMillis: idleTimeoutMillis(),
     circuitBreakerMillis: circuitBreakerMillis(),
-    circuitOpen: Boolean(state.circuitOpenUntil && state.circuitOpenUntil > Date.now()),
-    circuitOpenUntil: state.circuitOpenUntil ? new Date(state.circuitOpenUntil).toISOString() : null,
+    circuitOpen: Boolean(
+      state.circuitOpenUntil && state.circuitOpenUntil > Date.now(),
+    ),
+    circuitOpenUntil: state.circuitOpenUntil
+      ? new Date(state.circuitOpenUntil).toISOString()
+      : null,
     circuitReason: state.circuitReason,
     initError: state.initError,
     lastConnectionError: state.lastConnectionError,

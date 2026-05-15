@@ -199,6 +199,9 @@ importers:
       pino-http:
         specifier: ^10
         version: 10.5.0
+      pg:
+        specifier: 8.20.0
+        version: 8.20.0
     devDependencies:
       '@types/bcryptjs':
         specifier: ^2.4.6

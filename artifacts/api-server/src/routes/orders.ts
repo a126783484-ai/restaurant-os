@@ -648,10 +648,11 @@ router.get("/orders", async (req, res, next): Promise<void> => {
       const balance = Math.max(roundMoney(totalAmount - netPaid), 0);
 
       let paymentStatus: string;
+      const hasRefund = (paymentSummary?.refundAmount ?? 0) > 0;
       if (order.status === "cancelled") {
-        paymentStatus = netPaid > 0 ? "refunded" : "cancelled";
-      } else if (netPaid <= 0) {
-        paymentStatus = "unpaid";
+        paymentStatus = netPaid === 0 ? "cancelled" : hasRefund ? "refunded" : "partially_paid";
+      } else if (netPaid === 0) {
+        paymentStatus = hasRefund ? "refunded" : "unpaid";
       } else if (balance > 0) {
         paymentStatus = "partially_paid";
       } else {
@@ -971,21 +972,30 @@ router.patch("/orders/:id", async (req, res, next): Promise<void> => {
       sendError(res, 404, "ORDER_NOT_FOUND", "Order not found.");
       return;
     }
-    if (order.status === "completed" || order.status === "cancelled") {
-      await syncTableAfterTerminalOrder(order.tableId);
+    const normalizedUpdatedStatus = typeof update.status === "string" ? normalizeOrderStatus(update.status) : undefined;
+
+    if (normalizedUpdatedStatus === "completed" || normalizedUpdatedStatus === "cancelled") {
+      await syncTableAfterTerminalOrder(existing.tableId);
     }
     if (items || statusBecomesTerminal) {
       await syncOrderPaymentSummary(order.id, actor);
     }
     const updated = await getDbOrder(order.id);
-    await writeAuditLog({
-      actor,
-      action: order.status === "completed" ? "order.completed" : order.status === "cancelled" ? "order.cancelled" : "order.updated",
-      entityType: "order",
-      entityId: order.id,
-      before: beforeAudit,
-      after: updated ?? order,
-    });
+    if (items || normalizedUpdatedStatus === "completed" || normalizedUpdatedStatus === "cancelled") {
+      const action = items
+        ? "order.items_updated"
+        : normalizedUpdatedStatus === "completed"
+          ? "order.completed"
+          : "order.cancelled";
+      await writeAuditLog({
+        actor,
+        action,
+        entityType: "order",
+        entityId: order.id,
+        before: beforeAudit,
+        after: updated ?? order,
+      });
+    }
     res.json(updated ?? order);
   } catch (error: any) {
     if (error?.statusCode) {

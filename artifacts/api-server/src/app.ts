@@ -201,27 +201,32 @@ app.get("/api/status", (_req, res) => {
   });
 });
 
-app.get("/api/health", (_req, res) => {
-  res.status(200).json({
-    ok: true,
-    service: "restaurant-os-api-server",
-    routesLoaded,
-    routesLoadError,
-    timestamp: new Date().toISOString(),
-  });
-});
-
-import("./routes")
-  .then(({ default: routes }) => {
-    app.use("/api", routes);
+async function loadApplicationRoutes() {
+  try {
+    const routerModule = await import("./routes");
+    app.use("/api", routerModule.default);
+    app.use(notFoundHandler);
+    app.use(errorHandler);
     routesLoaded = true;
-  })
-  .catch((err) => {
+    logger.info("Application routes loaded");
+  } catch (err) {
+    routesLoaded = false;
     routesLoadError = err instanceof Error ? err.message : String(err);
-    logger.error({ err }, "failed to load api routes");
-  });
+    logger.error(err, "Failed to load application routes");
+    app.use("/api", (_req, res) => {
+      res.status(503).json({
+        ok: false,
+        error: { code: "ROUTES_UNAVAILABLE", message: "API routes failed to load" },
+        message: routesLoadError,
+        databaseUrl: getSafeDatabaseUrlDiagnostic(),
+        timestamp: new Date().toISOString(),
+      });
+    });
+    app.use(notFoundHandler);
+    app.use(errorHandler);
+  }
+}
 
-app.use(notFoundHandler);
-app.use(errorHandler);
+void loadApplicationRoutes();
 
 export default app;

@@ -75,7 +75,10 @@ const VALID_PAYMENT_METHODS = new Set([
 let orderSchemaReady: Promise<void> | null = null;
 
 type Queryable = {
-  query: (text: string, params?: unknown[]) => Promise<{ rows: any[] }>;
+  query: (
+    text: string,
+    params?: unknown[],
+  ) => Promise<{ rows: any[]; rowCount?: number | null }>;
 };
 
 function roundMoney(value: unknown): number {
@@ -600,7 +603,7 @@ async function createDbOrderTransaction(input: {
         "UPDATE tables SET status = 'occupied', updated_at = now() WHERE id = $1",
         [tableId],
       );
-      if ((tableUpdate as { rowCount?: number }).rowCount !== 1) {
+      if (tableUpdate.rowCount !== 1) {
         throw Object.assign(
           new Error("Selected table could not be marked occupied."),
           { statusCode: 409, code: "TABLE_STATUS_SYNC_FAILED" },

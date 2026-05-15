@@ -93,8 +93,12 @@ type PaymentSummaryDegraded = {
   paymentSummaryErrorMessage?: string;
 };
 
-function isPaymentSummaryUnavailable(order: unknown): order is PaymentSummaryDegraded {
-  return Boolean((order as PaymentSummaryDegraded | null)?.paymentSummaryUnavailable);
+function isPaymentSummaryUnavailable(
+  order: unknown,
+): order is PaymentSummaryDegraded {
+  return Boolean(
+    (order as PaymentSummaryDegraded | null)?.paymentSummaryUnavailable,
+  );
 }
 
 function safeMoney(value: unknown): number {
@@ -184,16 +188,24 @@ export default function Orders() {
   const { data: tables } = useListTables();
   const createOrder = useCreateOrder();
 
-  const { register, handleSubmit, control, reset } = useForm<OrderFormValues>({
-    defaultValues: { type: "dine-in", tableId: "__none__", notes: "" },
-  });
+  const { register, handleSubmit, control, reset, watch } =
+    useForm<OrderFormValues>({
+      defaultValues: { type: "dine-in", tableId: "__none__", notes: "" },
+    });
+  const selectedOrderType = watch("type");
+  const selectedTableId = watch("tableId");
+  const isDineInMissingTable =
+    selectedOrderType === "dine-in" &&
+    (!selectedTableId || selectedTableId === "__none__");
 
   const displayedOrders = useMemo(() => {
     const list = orders ?? [];
     if (statusFilter === "all") return list;
     if (statusFilter === "today") {
       const today = new Date().toDateString();
-      return list.filter((order) => new Date(order.createdAt).toDateString() === today);
+      return list.filter(
+        (order) => new Date(order.createdAt).toDateString() === today,
+      );
     }
     if (statusFilter === "unpaid")
       return list.filter(
@@ -212,7 +224,9 @@ export default function Orders() {
           order.paymentStatus === "paid" && order.status !== "cancelled",
       );
     if (statusFilter === "with_balance")
-      return list.filter((order) => (order.balance ?? 0) > 0 && order.status !== "cancelled");
+      return list.filter(
+        (order) => (order.balance ?? 0) > 0 && order.status !== "cancelled",
+      );
     if (statusFilter === "active")
       return list.filter((order) =>
         ["pending", "preparing", "ready"].includes(order.status),
@@ -233,10 +247,17 @@ export default function Orders() {
         ["pending", "preparing", "ready"].includes(o.status),
       ).length,
       unpaid: list.filter(
-        (o) => !isPaymentSummaryUnavailable(o) && o.paymentStatus !== "paid" && o.status !== "cancelled",
+        (o) =>
+          !isPaymentSummaryUnavailable(o) &&
+          o.paymentStatus !== "paid" &&
+          o.status !== "cancelled",
       ).length,
       revenue: list.reduce(
-        (sum, o) => sum + (o.status === "cancelled" || isPaymentSummaryUnavailable(o) ? 0 : safeMoney(o.totalAmount)),
+        (sum, o) =>
+          sum +
+          (o.status === "cancelled" || isPaymentSummaryUnavailable(o)
+            ? 0
+            : safeMoney(o.totalAmount)),
         0,
       ),
     };
@@ -281,6 +302,17 @@ export default function Orders() {
   const onSubmit = (data: OrderFormValues) => {
     if (orderItems.length === 0) {
       toast({ title: "請至少新增一項商品", variant: "destructive" });
+      return;
+    }
+    if (
+      data.type === "dine-in" &&
+      (!data.tableId || data.tableId === "__none__")
+    ) {
+      toast({
+        title: "請選擇桌次",
+        description: "內用訂單必須先選擇桌次，外帶訂單可不指定桌次。",
+        variant: "destructive",
+      });
       return;
     }
     createOrder.mutate(
@@ -418,8 +450,19 @@ export default function Orders() {
 
       {error && (
         <div className="flex flex-col gap-3 rounded-3xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-bold text-destructive sm:flex-row sm:items-center sm:justify-between">
-          <span>{getSafeErrorMessage(error, "訂單 API 暫時無法讀取，請重新整理或稍後再試。")}</span>
-          <Button type="button" variant="outline" className="min-h-10 rounded-2xl" onClick={() => refetch()} disabled={isFetching}>
+          <span>
+            {getSafeErrorMessage(
+              error,
+              "訂單 API 暫時無法讀取，請重新整理或稍後再試。",
+            )}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-10 rounded-2xl"
+            onClick={() => refetch()}
+            disabled={isFetching}
+          >
             {isFetching ? "重試中…" : "重試"}
           </Button>
         </div>
@@ -484,7 +527,9 @@ export default function Orders() {
                   {ORDER_STATUS_LABELS[order.status] ?? order.status}
                 </Badge>
                 {summaryUnavailable && (
-                  <span className="w-24 text-xs font-black text-amber-600">付款摘要暫時無法讀取</span>
+                  <span className="w-24 text-xs font-black text-amber-600">
+                    付款摘要暫時無法讀取
+                  </span>
                 )}
                 {!summaryUnavailable && (
                   <Badge
@@ -512,7 +557,9 @@ export default function Orders() {
                 >
                   {summaryUnavailable ? "—" : `$${balance.toFixed(2)}`}
                 </span>
-                <span className="w-16 text-right text-xs font-black text-muted-foreground">{summaryUnavailable ? "—" : `${order.paymentCount ?? 0} 筆`}</span>
+                <span className="w-16 text-right text-xs font-black text-muted-foreground">
+                  {summaryUnavailable ? "—" : `${order.paymentCount ?? 0} 筆`}
+                </span>
                 <div className="flex w-32 justify-end gap-2">
                   <Link href={`/orders/${order.id}`}>
                     <Button
@@ -605,7 +652,9 @@ export default function Orders() {
                     {order.tableId ? ` · ${order.tableId} 桌` : ""}
                   </span>
                   <span className="rounded-full bg-muted px-2.5 py-1 text-[10px] font-black text-muted-foreground">
-                    {summaryUnavailable ? "付款摘要暫時無法讀取" : `${order.paymentCount ?? 0} 筆付款`}
+                    {summaryUnavailable
+                      ? "付款摘要暫時無法讀取"
+                      : `${order.paymentCount ?? 0} 筆付款`}
                   </span>
                 </div>
                 <div className="mt-4 grid grid-cols-3 gap-2 rounded-2xl bg-muted/50 p-3 text-center text-xs">
@@ -728,6 +777,14 @@ export default function Orders() {
                     </Select>
                   )}
                 />
+                {isDineInMissingTable && (
+                  <p
+                    className="text-xs font-semibold text-destructive"
+                    role="alert"
+                  >
+                    內用訂單必須選擇桌次；外帶訂單可不指定桌次。
+                  </p>
+                )}
               </div>
             </div>
 
@@ -821,7 +878,11 @@ export default function Orders() {
                 className="min-h-11 rounded-2xl font-black"
                 data-testid="button-submit-order"
                 type="submit"
-                disabled={createOrder.isPending || orderItems.length === 0}
+                disabled={
+                  createOrder.isPending ||
+                  orderItems.length === 0 ||
+                  isDineInMissingTable
+                }
               >
                 {createOrder.isPending
                   ? "建立中…"

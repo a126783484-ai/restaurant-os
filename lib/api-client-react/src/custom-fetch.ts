@@ -48,7 +48,10 @@ function isRequest(input: RequestInfo | URL): input is Request {
   return typeof Request !== "undefined" && input instanceof Request;
 }
 
-function resolveMethod(input: RequestInfo | URL, explicitMethod?: string): string {
+function resolveMethod(
+  input: RequestInfo | URL,
+  explicitMethod?: string,
+): string {
   if (explicitMethod) return explicitMethod.toUpperCase();
   if (isRequest(input)) return input.method.toUpperCase();
   return "GET";
@@ -97,17 +100,19 @@ function getMediaType(headers: Headers): string | null {
 }
 
 function isJsonMediaType(mediaType: string | null): boolean {
-  return mediaType === "application/json" || Boolean(mediaType?.endsWith("+json"));
+  return (
+    mediaType === "application/json" || Boolean(mediaType?.endsWith("+json"))
+  );
 }
 
 function isTextMediaType(mediaType: string | null): boolean {
   return Boolean(
     mediaType &&
-      (mediaType.startsWith("text/") ||
-        mediaType === "application/xml" ||
-        mediaType === "text/xml" ||
-        mediaType.endsWith("+xml") ||
-        mediaType === "application/x-www-form-urlencoded"),
+    (mediaType.startsWith("text/") ||
+      mediaType === "application/xml" ||
+      mediaType === "text/xml" ||
+      mediaType.endsWith("+xml") ||
+      mediaType === "application/x-www-form-urlencoded"),
   );
 }
 
@@ -158,9 +163,18 @@ function buildErrorMessage(response: Response, data: unknown): string {
 
   const title = getStringField(data, "title");
   const detail = getStringField(data, "detail");
-  const nestedError = data && typeof data === "object" ? (data as { error?: unknown }).error : undefined;
-  const nestedErrorMessage = nestedError && typeof nestedError === "object" ? getStringField(nestedError, "message") : undefined;
-  const nestedErrorCode = nestedError && typeof nestedError === "object" ? getStringField(nestedError, "code") : undefined;
+  const nestedError =
+    data && typeof data === "object"
+      ? (data as { error?: unknown }).error
+      : undefined;
+  const nestedErrorMessage =
+    nestedError && typeof nestedError === "object"
+      ? getStringField(nestedError, "message")
+      : undefined;
+  const nestedErrorCode =
+    nestedError && typeof nestedError === "object"
+      ? getStringField(nestedError, "code")
+      : undefined;
   const message =
     nestedErrorMessage ??
     getStringField(data, "message") ??
@@ -169,7 +183,8 @@ function buildErrorMessage(response: Response, data: unknown): string {
 
   if (title && detail) return `${prefix}: ${title} — ${detail}`;
   if (detail) return `${prefix}: ${detail}`;
-  if (message && nestedErrorCode) return `${prefix}: ${nestedErrorCode} — ${message}`;
+  if (message && nestedErrorCode)
+    return `${prefix}: ${nestedErrorCode} — ${message}`;
   if (message) return `${prefix}: ${message}`;
   if (title) return `${prefix}: ${title}`;
 
@@ -238,6 +253,22 @@ export class ResponseParseError extends Error {
   }
 }
 
+export class ApiTimeoutError extends Error {
+  readonly name = "ApiTimeoutError";
+  readonly code = "API_TIMEOUT";
+  readonly timeoutMs: number;
+  readonly method: string;
+  readonly url: string;
+
+  constructor(timeoutMs: number, requestInfo: { method: string; url: string }) {
+    super(`API request timed out after ${timeoutMs}ms. Please retry.`);
+    Object.setPrototypeOf(this, new.target.prototype);
+    this.timeoutMs = timeoutMs;
+    this.method = requestInfo.method;
+    this.url = requestInfo.url;
+  }
+}
+
 async function parseJsonBody(
   response: Response,
   requestInfo: { method: string; url: string },
@@ -256,7 +287,10 @@ async function parseJsonBody(
   }
 }
 
-async function parseErrorBody(response: Response, method: string): Promise<unknown> {
+async function parseErrorBody(
+  response: Response,
+  method: string,
+): Promise<unknown> {
   if (hasNoBody(response, method)) {
     return null;
   }
@@ -265,7 +299,9 @@ async function parseErrorBody(response: Response, method: string): Promise<unkno
 
   // Fall back to text when blob() is unavailable (e.g. some React Native builds).
   if (mediaType && !isJsonMediaType(mediaType) && !isTextMediaType(mediaType)) {
-    return typeof response.blob === "function" ? response.blob() : response.text();
+    return typeof response.blob === "function"
+      ? response.blob()
+      : response.text();
   }
 
   const raw = await response.text();
@@ -320,7 +356,7 @@ async function parseSuccessBody(
       if (typeof response.blob !== "function") {
         throw new TypeError(
           "Blob responses are not supported in this runtime. " +
-            "Use responseType \"json\" or \"text\" instead.",
+            'Use responseType "json" or "text" instead.',
         );
       }
       return response.blob();
@@ -340,7 +376,10 @@ export async function customFetch<T = unknown>(
     throw new TypeError(`customFetch: ${method} requests cannot have a body.`);
   }
 
-  const headers = mergeHeaders(isRequest(input) ? input.headers : undefined, headersInit);
+  const headers = mergeHeaders(
+    isRequest(input) ? input.headers : undefined,
+    headersInit,
+  );
 
   if (
     typeof init.body === "string" &&
@@ -364,18 +403,45 @@ export async function customFetch<T = unknown>(
   }
 
   const requestInfo = { method, url: resolveUrl(input) };
-  const timeoutMs = Number((globalThis as typeof globalThis & { __RESTAURANT_OS_API_TIMEOUT_MS__?: number }).__RESTAURANT_OS_API_TIMEOUT_MS__ ?? 20_000);
-  const controller = !init.signal && Number.isFinite(timeoutMs) && timeoutMs > 0 ? new AbortController() : null;
+  const timeoutMs = Number(
+    (
+      globalThis as typeof globalThis & {
+        __RESTAURANT_OS_API_TIMEOUT_MS__?: number;
+      }
+    ).__RESTAURANT_OS_API_TIMEOUT_MS__ ?? 20_000,
+  );
+  const controller =
+    !init.signal && Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? new AbortController()
+      : null;
   const timeout = controller
-    ? setTimeout(() => controller.abort(new Error(`API request timed out after ${timeoutMs}ms.`)), timeoutMs)
+    ? setTimeout(
+        () => controller.abort(new ApiTimeoutError(timeoutMs, requestInfo)),
+        timeoutMs,
+      )
     : null;
 
   let response: Response;
   try {
-    response = await fetch(input, { credentials: "include", ...init, signal: init.signal ?? controller?.signal, method, headers });
+    response = await fetch(input, {
+      credentials: "include",
+      ...init,
+      signal: init.signal ?? controller?.signal,
+      method,
+      headers,
+    });
   } catch (error) {
+    if (error instanceof ApiTimeoutError) {
+      throw error;
+    }
+    if (controller?.signal.aborted) {
+      const reason = controller.signal.reason;
+      throw reason instanceof ApiTimeoutError
+        ? reason
+        : new ApiTimeoutError(timeoutMs, requestInfo);
+    }
     if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error("API request timed out. Please retry.");
+      throw new ApiTimeoutError(timeoutMs, requestInfo);
     }
     throw error;
   } finally {

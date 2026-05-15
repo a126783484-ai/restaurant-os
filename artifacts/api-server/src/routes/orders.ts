@@ -74,8 +74,12 @@ const VALID_PAYMENT_METHODS = new Set([
 ]);
 let orderSchemaReady: Promise<void> | null = null;
 
-
-type Queryable = { query: (text: string, params?: unknown[]) => Promise<{ rows: any[] }> };
+type Queryable = {
+  query: (
+    text: string,
+    params?: unknown[],
+  ) => Promise<{ rows: any[]; rowCount?: number | null }>;
+};
 
 function roundMoney(value: unknown): number {
   const amount = Number(value ?? 0);
@@ -96,25 +100,36 @@ function sendError(
   });
 }
 
-async function syncTableAfterTerminalOrderWithClient(client: Queryable, tableId: number | null | undefined) {
+async function syncTableAfterTerminalOrderWithClient(
+  client: Queryable,
+  tableId: number | null | undefined,
+) {
   if (!tableId) return;
   const active = await client.query(
     "SELECT COUNT(*)::int AS count FROM orders WHERE table_id = $1 AND type = 'dine-in' AND status = ANY($2::text[])",
     [tableId, [...ACTIVE_DINE_IN_ORDER_STATUSES]],
   );
   if (Number(active.rows[0]?.count ?? 0) === 0) {
-    await client.query("UPDATE tables SET status = 'cleaning', updated_at = now() WHERE id = $1 AND status = 'occupied'", [tableId]);
+    await client.query(
+      "UPDATE tables SET status = 'cleaning', updated_at = now() WHERE id = $1 AND status = 'occupied'",
+      [tableId],
+    );
   }
 }
 
-async function writeOperationalAuditLog(input: Parameters<typeof writeAuditLog>[0]): Promise<void> {
+async function writeOperationalAuditLog(
+  input: Parameters<typeof writeAuditLog>[0],
+): Promise<void> {
   const client = input.client as Queryable | undefined;
   try {
     if (client) await client.query("SAVEPOINT order_status_audit");
     await writeAuditLog(input);
     if (client) await client.query("RELEASE SAVEPOINT order_status_audit");
   } catch (error) {
-    if (client) await client.query("ROLLBACK TO SAVEPOINT order_status_audit").catch(() => undefined);
+    if (client)
+      await client
+        .query("ROLLBACK TO SAVEPOINT order_status_audit")
+        .catch(() => undefined);
     console.error("[orders] audit log write failed during status update", {
       action: input.action,
       entityId: input.entityId,
@@ -154,9 +169,16 @@ async function getDbOrderWithClient(client: Queryable, id: number) {
     totalAmount,
     balance: Math.max(roundMoney(totalAmount - paidAmount), 0),
     paymentNote: order.payment_note ?? null,
-    paidAt: order.paid_at ? (order.paid_at instanceof Date ? order.paid_at.toISOString() : new Date(String(order.paid_at)).toISOString()) : null,
+    paidAt: order.paid_at
+      ? order.paid_at instanceof Date
+        ? order.paid_at.toISOString()
+        : new Date(String(order.paid_at)).toISOString()
+      : null,
     notes: order.notes ?? null,
-    createdAt: order.created_at instanceof Date ? order.created_at.toISOString() : new Date(String(order.created_at)).toISOString(),
+    createdAt:
+      order.created_at instanceof Date
+        ? order.created_at.toISOString()
+        : new Date(String(order.created_at)).toISOString(),
     items: itemResult.rows.map((item) => ({
       id: Number(item.id),
       orderId: Number(item.order_id),
@@ -187,7 +209,10 @@ async function updateDbOrderStatusOnly(input: {
     );
     const existing = existingResult.rows[0];
     if (!existing) {
-      throw Object.assign(new Error("Order not found."), { statusCode: 404, code: "ORDER_NOT_FOUND" });
+      throw Object.assign(new Error("Order not found."), {
+        statusCode: 404,
+        code: "ORDER_NOT_FOUND",
+      });
     }
 
     assertOrderTransition(existing.status, input.status);
@@ -200,20 +225,33 @@ async function updateDbOrderStatusOnly(input: {
     );
 
     if (input.status === "completed") {
-      await syncTableAfterTerminalOrderWithClient(client, existing.table_id == null ? null : Number(existing.table_id));
+      await syncTableAfterTerminalOrderWithClient(
+        client,
+        existing.table_id == null ? null : Number(existing.table_id),
+      );
     }
 
     const updated = await getDbOrderWithClient(client, input.id);
     if (!updated) {
-      throw Object.assign(new Error("Order not found after update."), { statusCode: 404, code: "ORDER_NOT_FOUND" });
+      throw Object.assign(new Error("Order not found after update."), {
+        statusCode: 404,
+        code: "ORDER_NOT_FOUND",
+      });
     }
 
     await writeOperationalAuditLog({
       actor: input.actor,
-      action: input.status === "completed" ? "order.completed" : "order.status_updated",
+      action:
+        input.status === "completed"
+          ? "order.completed"
+          : "order.status_updated",
       entityType: "order",
       entityId: input.id,
-      before: { id: Number(existing.id), status: String(existing.status), tableId: existing.table_id == null ? null : Number(existing.table_id) },
+      before: {
+        id: Number(existing.id),
+        status: String(existing.status),
+        tableId: existing.table_id == null ? null : Number(existing.table_id),
+      },
       after: updated,
       client,
     });
@@ -281,7 +319,6 @@ type NormalizeUpdateResult =
     }
   | { ok: false; message: string };
 
-
 function normalizeItems(items: unknown[]): NormalizedOrderItemInput[] {
   return items
     .map((item) => {
@@ -326,7 +363,10 @@ function normalizeUpdate(data: Record<string, unknown>): NormalizeUpdateResult {
   if (typeof data.paymentStatus === "string") {
     if (!VALID_PAYMENT_STATUSES.has(data.paymentStatus))
       return { ok: false, message: "Invalid payment status." };
-    return { ok: false, message: "Payment status is derived from the payment ledger." };
+    return {
+      ok: false,
+      message: "Payment status is derived from the payment ledger.",
+    };
   }
   if (typeof data.paymentMethod === "string") {
     if (!VALID_PAYMENT_METHODS.has(data.paymentMethod))
@@ -339,10 +379,16 @@ function normalizeUpdate(data: Record<string, unknown>): NormalizeUpdateResult {
   if (typeof data.tableId === "number" || data.tableId === null)
     update.tableId = data.tableId;
   if (data.paidAmount !== undefined) {
-    return { ok: false, message: "Paid amount is derived from the payment ledger." };
+    return {
+      ok: false,
+      message: "Paid amount is derived from the payment ledger.",
+    };
   }
   if (data.totalAmount !== undefined) {
-    return { ok: false, message: "Order total is derived from item price snapshots." };
+    return {
+      ok: false,
+      message: "Order total is derived from item price snapshots.",
+    };
   }
   if (typeof data.paidAt === "string") {
     const paidAt = new Date(data.paidAt);
@@ -408,7 +454,9 @@ async function buildDbItems(
 }
 
 async function buildDbItemsWithClient(
-  client: { query: (text: string, params?: unknown[]) => Promise<{ rows: any[] }> },
+  client: {
+    query: (text: string, params?: unknown[]) => Promise<{ rows: any[] }>;
+  },
   items: Array<{ productId: number; quantity: number; notes?: string | null }>,
 ) {
   const productIds = [...new Set(items.map((i) => i.productId))];
@@ -416,8 +464,14 @@ async function buildDbItemsWithClient(
     "SELECT id, name, price FROM products WHERE id = ANY($1::int[])",
     [productIds],
   );
-  const productMap = new Map<number, { id: number; name: string; price: number }>(
-    productResult.rows.map((p) => [Number(p.id), { id: Number(p.id), name: p.name, price: Number(p.price) }]),
+  const productMap = new Map<
+    number,
+    { id: number; name: string; price: number }
+  >(
+    productResult.rows.map((p) => [
+      Number(p.id),
+      { id: Number(p.id), name: p.name, price: Number(p.price) },
+    ]),
   );
 
   let totalAmount = 0;
@@ -463,26 +517,65 @@ async function createDbOrderTransaction(input: {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const orderType = dbOrderType(input.orderData.type ?? "dine_in");
+    const tableId = input.orderData.tableId ?? null;
+
     if (input.idempotencyKey) {
       const existing = await client.query(
         "SELECT id FROM orders WHERE idempotency_key = $1 LIMIT 1",
         [input.idempotencyKey],
       );
       if (existing.rows[0]?.id) {
+        const order = await getDbOrderWithClient(
+          client,
+          Number(existing.rows[0].id),
+        );
+        if (!order) {
+          throw Object.assign(
+            new Error("Order not found after idempotent replay."),
+            {
+              statusCode: 404,
+              code: "ORDER_NOT_FOUND",
+            },
+          );
+        }
         await client.query("COMMIT");
-        return { order: await getDbOrder(Number(existing.rows[0].id)), replayed: true };
+        return { order, replayed: true };
       }
     }
 
-    const { enrichedItems, totalAmount } = await buildDbItemsWithClient(client, input.items);
+    if (orderType === "dine-in" && !tableId) {
+      throw Object.assign(new Error("Dine-in orders require a valid table."), {
+        statusCode: 400,
+        code: "ORDER_TABLE_REQUIRED",
+      });
+    }
+
+    if (orderType === "dine-in" && tableId) {
+      const tableResult = await client.query(
+        "SELECT id FROM tables WHERE id = $1 FOR UPDATE",
+        [tableId],
+      );
+      if (!tableResult.rows[0]?.id) {
+        throw Object.assign(new Error("Selected table was not found."), {
+          statusCode: 404,
+          code: "TABLE_NOT_FOUND",
+        });
+      }
+    }
+
+    const { enrichedItems, totalAmount } = await buildDbItemsWithClient(
+      client,
+      input.items,
+    );
     const orderResult = await client.query(
       `INSERT INTO orders (customer_id, table_id, type, status, payment_status, payment_method, paid_amount, total_amount, notes, idempotency_key)
        VALUES ($1, $2, $3, 'pending', 'unpaid', 'unpaid', 0, $4, $5, $6)
-       RETURNING id`,
+      RETURNING id`,
       [
         input.orderData.customerId ?? null,
-        input.orderData.tableId ?? null,
-        dbOrderType(input.orderData.type ?? "dine_in"),
+        tableId,
+        orderType,
         totalAmount,
         input.orderData.notes ?? null,
         input.idempotencyKey,
@@ -493,21 +586,35 @@ async function createDbOrderTransaction(input: {
       await client.query(
         `INSERT INTO order_items (order_id, product_id, product_name, quantity, unit_price, subtotal, notes)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [orderId, item.productId, item.productName, item.quantity, item.unitPrice, item.subtotal, item.notes],
+        [
+          orderId,
+          item.productId,
+          item.productName,
+          item.quantity,
+          item.unitPrice,
+          item.subtotal,
+          item.notes,
+        ],
       );
     }
 
-    if (input.orderData.tableId && dbOrderType(input.orderData.type ?? "dine_in") === "dine-in") {
-      await client.query(
+    if (tableId && orderType === "dine-in") {
+      const tableUpdate = await client.query(
         "UPDATE tables SET status = 'occupied', updated_at = now() WHERE id = $1",
-        [input.orderData.tableId],
+        [tableId],
       );
+      if (tableUpdate.rowCount !== 1) {
+        throw Object.assign(
+          new Error("Selected table could not be marked occupied."),
+          { statusCode: 409, code: "TABLE_STATUS_SYNC_FAILED" },
+        );
+      }
     }
 
     if (input.orderData.customerId) {
       await client.query(
         "INSERT INTO visits (customer_id, order_id, amount, order_type) VALUES ($1, $2, $3, $4)",
-        [input.orderData.customerId, orderId, totalAmount, dbOrderType(input.orderData.type ?? "dine_in")],
+        [input.orderData.customerId, orderId, totalAmount, orderType],
       );
       await client.query(
         "UPDATE customers SET visit_count = visit_count + 1, total_spend = total_spend + $1 WHERE id = $2",
@@ -520,12 +627,25 @@ async function createDbOrderTransaction(input: {
       action: "order.created",
       entityType: "order",
       entityId: orderId,
-      after: { id: orderId, totalAmount, itemCount: enrichedItems.length, tableId: input.orderData.tableId ?? null },
+      after: {
+        id: orderId,
+        totalAmount,
+        itemCount: enrichedItems.length,
+        tableId,
+      },
       client,
     });
 
+    const order = await getDbOrderWithClient(client, orderId);
+    if (!order) {
+      throw Object.assign(new Error("Order not found after create."), {
+        statusCode: 404,
+        code: "ORDER_NOT_FOUND",
+      });
+    }
+
     await client.query("COMMIT");
-    return { order: await getDbOrder(orderId), replayed: false };
+    return { order, replayed: false };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
     throw error;
@@ -541,13 +661,21 @@ async function syncTableAfterTerminalOrder(tableId: number | null | undefined) {
     [tableId, [...ACTIVE_DINE_IN_ORDER_STATUSES]],
   );
   if (Number(active.rows[0]?.count ?? 0) === 0) {
-    await pool.query("UPDATE tables SET status = 'cleaning', updated_at = now() WHERE id = $1 AND status = 'occupied'", [tableId]);
+    await pool.query(
+      "UPDATE tables SET status = 'cleaning', updated_at = now() WHERE id = $1 AND status = 'occupied'",
+      [tableId],
+    );
   }
 }
 
 async function batchFetchPaymentSummaries(
   orderIds: number[],
-): Promise<Map<number, { chargeAmount: number; refundAmount: number; paymentCount: number }>> {
+): Promise<
+  Map<
+    number,
+    { chargeAmount: number; refundAmount: number; paymentCount: number }
+  >
+> {
   if (orderIds.length === 0) return new Map();
   const result = await pool.query(
     `SELECT
@@ -560,7 +688,10 @@ async function batchFetchPaymentSummaries(
      GROUP BY order_id`,
     [orderIds],
   );
-  const map = new Map<number, { chargeAmount: number; refundAmount: number; paymentCount: number }>();
+  const map = new Map<
+    number,
+    { chargeAmount: number; refundAmount: number; paymentCount: number }
+  >();
   for (const row of result.rows) {
     map.set(Number(row.order_id), {
       chargeAmount: Number(row.charge_amount),
@@ -615,14 +746,20 @@ router.get("/orders", async (req, res, next): Promise<void> => {
     }
 
     const orderIds = orders.map((order) => order.id);
-    let paymentMap = new Map<number, { chargeAmount: number; refundAmount: number; paymentCount: number }>();
+    let paymentMap = new Map<
+      number,
+      { chargeAmount: number; refundAmount: number; paymentCount: number }
+    >();
     let paymentSummaryUnavailable = false;
 
     try {
       paymentMap = await batchFetchPaymentSummaries(orderIds);
     } catch (paymentError) {
       paymentSummaryUnavailable = true;
-      console.error("[orders] batch payment summary failed, using order-level fallback", paymentError);
+      console.error(
+        "[orders] batch payment summary failed, using order-level fallback",
+        paymentError,
+      );
     }
 
     const enrichedOrders = orders.map((order) => {
@@ -638,20 +775,31 @@ router.get("/orders", async (req, res, next): Promise<void> => {
           paymentCount: 0,
           paymentSummaryUnavailable: true,
           paymentSummaryErrorCode: "PAYMENT_SUMMARY_UNAVAILABLE",
-          paymentSummaryErrorMessage: "Payment summary could not be calculated for this order.",
+          paymentSummaryErrorMessage:
+            "Payment summary could not be calculated for this order.",
         };
       }
 
       const paymentSummary = paymentMap.get(order.id);
       const netPaid = paymentSummary
-        ? Math.max(roundMoney(paymentSummary.chargeAmount - paymentSummary.refundAmount), 0)
+        ? Math.max(
+            roundMoney(
+              paymentSummary.chargeAmount - paymentSummary.refundAmount,
+            ),
+            0,
+          )
         : 0;
       const balance = Math.max(roundMoney(totalAmount - netPaid), 0);
 
       let paymentStatus: string;
       const hasRefund = (paymentSummary?.refundAmount ?? 0) > 0;
       if (order.status === "cancelled") {
-        paymentStatus = netPaid === 0 ? "cancelled" : hasRefund ? "refunded" : "partially_paid";
+        paymentStatus =
+          netPaid === 0
+            ? "cancelled"
+            : hasRefund
+              ? "refunded"
+              : "partially_paid";
       } else if (netPaid === 0) {
         paymentStatus = hasRefund ? "refunded" : "unpaid";
       } else if (balance > 0) {
@@ -676,10 +824,11 @@ router.get("/orders", async (req, res, next): Promise<void> => {
   }
 });
 
-
 router.get("/orders/kds", async (_req, res, next): Promise<void> => {
   if (!isDatabaseConfigured()) {
-    const orders = KDS_ACTIVE_ORDER_STATUSES.flatMap((status) => listRuntimeOrders({ status }));
+    const orders = KDS_ACTIVE_ORDER_STATUSES.flatMap((status) =>
+      listRuntimeOrders({ status }),
+    );
     res.json({
       ok: true,
       sourceOfTruth: "backend-order-domain",
@@ -704,7 +853,10 @@ router.get("/orders/kds", async (_req, res, next): Promise<void> => {
     });
   } catch (error) {
     if (isDatabaseUnavailableError(error)) {
-      const message = error instanceof Error ? error.message : "Database unavailable while loading KDS board.";
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Database unavailable while loading KDS board.";
       res.status(503).json({
         ok: false,
         sourceOfTruth: "backend-order-domain",
@@ -777,7 +929,12 @@ router.post("/orders", async (req, res, next): Promise<void> => {
     res.status(result.replayed ? 200 : 201).json(result.order);
   } catch (error: any) {
     if (error?.statusCode) {
-      sendError(res, error.statusCode, error.code ?? "ORDER_CREATE_INVALID", error.message);
+      sendError(
+        res,
+        error.statusCode,
+        error.code ?? "ORDER_CREATE_INVALID",
+        error.message,
+      );
       return;
     }
     next(error);
@@ -801,7 +958,6 @@ async function getDbOrder(id: number) {
   return { ...orderWithPaymentSummary, items };
 }
 
-
 router.get("/orders/:id/payments", async (req, res, next): Promise<void> => {
   const params = GetOrderParams.safeParse(req.params);
   if (!params.success) {
@@ -809,7 +965,12 @@ router.get("/orders/:id/payments", async (req, res, next): Promise<void> => {
     return;
   }
   if (!isDatabaseConfigured()) {
-    sendError(res, 503, "DATABASE_UNAVAILABLE", "Payment records require DATABASE_URL.");
+    sendError(
+      res,
+      503,
+      "DATABASE_UNAVAILABLE",
+      "Payment records require DATABASE_URL.",
+    );
     return;
   }
   try {
@@ -828,7 +989,12 @@ router.get("/orders/:id/payments", async (req, res, next): Promise<void> => {
 router.post("/orders/:id/payments", async (req, res, next): Promise<void> => {
   const user = getRequestUser(req);
   if (!canAddPayment(user?.role)) {
-    sendError(res, 403, "AUTH_FORBIDDEN", "You do not have permission to add payments.");
+    sendError(
+      res,
+      403,
+      "AUTH_FORBIDDEN",
+      "You do not have permission to add payments.",
+    );
     return;
   }
   const params = GetOrderParams.safeParse(req.params);
@@ -839,15 +1005,30 @@ router.post("/orders/:id/payments", async (req, res, next): Promise<void> => {
   const amount = Number(req.body?.amount);
   const method = String(req.body?.method ?? "") as PaymentMethod;
   if (!Number.isFinite(amount) || amount <= 0) {
-    sendError(res, 400, "PAYMENT_AMOUNT_INVALID", "Payment amount must be greater than 0.");
+    sendError(
+      res,
+      400,
+      "PAYMENT_AMOUNT_INVALID",
+      "Payment amount must be greater than 0.",
+    );
     return;
   }
   if (!["cash", "card", "transfer", "external"].includes(method)) {
-    sendError(res, 400, "PAYMENT_METHOD_INVALID", "Payment method must be cash, card, transfer, or external.");
+    sendError(
+      res,
+      400,
+      "PAYMENT_METHOD_INVALID",
+      "Payment method must be cash, card, transfer, or external.",
+    );
     return;
   }
   if (!isDatabaseConfigured()) {
-    sendError(res, 503, "DATABASE_UNAVAILABLE", "Payment records require DATABASE_URL.");
+    sendError(
+      res,
+      503,
+      "DATABASE_UNAVAILABLE",
+      "Payment records require DATABASE_URL.",
+    );
     return;
   }
   try {
@@ -857,7 +1038,10 @@ router.post("/orders/:id/payments", async (req, res, next): Promise<void> => {
       amount,
       method,
       note: typeof req.body?.note === "string" ? req.body.note : null,
-      externalReference: typeof req.body?.externalReference === "string" ? req.body.externalReference : null,
+      externalReference:
+        typeof req.body?.externalReference === "string"
+          ? req.body.externalReference
+          : null,
       actor: user,
       idempotencyKey: getIdempotencyKey(req),
     });
@@ -865,7 +1049,12 @@ router.post("/orders/:id/payments", async (req, res, next): Promise<void> => {
     res.status(201).json({ ...result, order });
   } catch (error: any) {
     if (error?.statusCode) {
-      sendError(res, error.statusCode, error.code ?? "PAYMENT_CREATE_FAILED", error.message);
+      sendError(
+        res,
+        error.statusCode,
+        error.code ?? "PAYMENT_CREATE_FAILED",
+        error.message,
+      );
       return;
     }
     next(error);
@@ -962,8 +1151,17 @@ router.patch("/orders/:id", async (req, res, next): Promise<void> => {
       if (normalizeOrderStatus(update.status) === "cancelled") {
         const summary = await calculateOrderPaymentSummary(existing.id);
         const user = getRequestUser(req);
-        if (summary.paidAmount > 0 && user?.role !== "admin" && user?.role !== "manager") {
-          throw Object.assign(new Error("Only admin or manager can cancel a paid or partially paid order."), { statusCode: 403, code: "AUTH_FORBIDDEN" });
+        if (
+          summary.paidAmount > 0 &&
+          user?.role !== "admin" &&
+          user?.role !== "manager"
+        ) {
+          throw Object.assign(
+            new Error(
+              "Only admin or manager can cancel a paid or partially paid order.",
+            ),
+            { statusCode: 403, code: "AUTH_FORBIDDEN" },
+          );
         }
       }
     }
@@ -979,7 +1177,6 @@ router.patch("/orders/:id", async (req, res, next): Promise<void> => {
       update.totalAmount = totalAmount;
     }
 
-
     const beforeAudit = { ...existing };
     const [order] = await db
       .update(ordersTable)
@@ -991,16 +1188,26 @@ router.patch("/orders/:id", async (req, res, next): Promise<void> => {
       sendError(res, 404, "ORDER_NOT_FOUND", "Order not found.");
       return;
     }
-    const normalizedUpdatedStatus = typeof update.status === "string" ? normalizeOrderStatus(update.status) : undefined;
+    const normalizedUpdatedStatus =
+      typeof update.status === "string"
+        ? normalizeOrderStatus(update.status)
+        : undefined;
 
-    if (normalizedUpdatedStatus === "completed" || normalizedUpdatedStatus === "cancelled") {
+    if (
+      normalizedUpdatedStatus === "completed" ||
+      normalizedUpdatedStatus === "cancelled"
+    ) {
       await syncTableAfterTerminalOrder(existing.tableId);
     }
     if (items || statusBecomesTerminal) {
       await syncOrderPaymentSummary(order.id, actor);
     }
     const updated = await getDbOrder(order.id);
-    if (items || normalizedUpdatedStatus === "completed" || normalizedUpdatedStatus === "cancelled") {
+    if (
+      items ||
+      normalizedUpdatedStatus === "completed" ||
+      normalizedUpdatedStatus === "cancelled"
+    ) {
       const action = items
         ? "order.items_updated"
         : normalizedUpdatedStatus === "completed"
@@ -1018,7 +1225,12 @@ router.patch("/orders/:id", async (req, res, next): Promise<void> => {
     res.json(updated ?? order);
   } catch (error: any) {
     if (error?.statusCode) {
-      sendError(res, error.statusCode, error.code ?? "ORDER_UPDATE_INVALID", error.message);
+      sendError(
+        res,
+        error.statusCode,
+        error.code ?? "ORDER_UPDATE_INVALID",
+        error.message,
+      );
       return;
     }
     next(error);

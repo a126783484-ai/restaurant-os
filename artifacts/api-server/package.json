@@ -14,7 +14,9 @@
     "repair:v3-production-data": "node ./scripts/repair-v3-production-data.mjs --dry-run",
     "smoke:orders-resilience": "node --experimental-strip-types ./test/orders-resilience-smoke.mjs",
     "smoke:kds-resilience": "node --experimental-strip-types ./test/kds-resilience-smoke.mjs",
-    "smoke:order-update-fast-path": "node ./test/order-update-fast-path-smoke.mjs"
+    "smoke:order-update-fast-path": "node ./test/order-update-fast-path-smoke.mjs",
+    "smoke:order-table-consistency": "node ./test/order-table-consistency-smoke.mjs",
+    "smoke:table-error-contract": "node ./test/table-error-contract-smoke.mjs"
   },
   "dependencies": {
     "@workspace/api-zod": "workspace:*",

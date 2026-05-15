@@ -142,7 +142,10 @@ function KDSCard({
           onAdvance();
         },
         onError: () => {
-          queryClient.invalidateQueries({ queryKey: getGetOrderQueryKey(order.id) });
+          queryClient.invalidateQueries({ queryKey: ["kds-board"] });
+          queryClient.invalidateQueries({
+            queryKey: getGetOrderQueryKey(order.id),
+          });
         },
       },
     );
@@ -218,13 +221,20 @@ function KDSCard({
         <div className="mt-3 rounded-2xl border border-amber-400/70 bg-amber-100/90 px-3 py-2 text-xs font-black text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/50 dark:text-amber-100">
           <AlertTriangle className="mr-1.5 inline h-3.5 w-3.5" />
           資料警示：{order.dataQualityCode ?? "DATA_QUALITY_ISSUE"}
-          <p className="mt-1 font-bold">{order.dataQualityMessage ?? "此訂單資料需要人工檢查，但不會阻塞 KDS 顯示。"}</p>
+          <p className="mt-1 font-bold">
+            {order.dataQualityMessage ??
+              "此訂單資料需要人工檢查，但不會阻塞 KDS 顯示。"}
+          </p>
         </div>
       )}
 
       {updateOrder.error && (
         <div className="mt-3 rounded-2xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs font-bold text-destructive">
-          更新失敗：{getSafeErrorMessage(updateOrder.error, "訂單狀態更新逾時或失敗，已重新同步訂單狀態。")}
+          更新失敗：
+          {getSafeErrorMessage(
+            updateOrder.error,
+            "訂單狀態更新逾時或失敗，已重新同步訂單狀態。",
+          )}
         </div>
       )}
 
@@ -311,13 +321,20 @@ export default function KitchenDisplay() {
     queryKey: ["kds-board"],
     queryFn: getKdsBoard,
     retry: 1,
-    refetchInterval: (query) => getKdsRefetchInterval(query.state.fetchFailureCount + (query.state.data?.degraded ? 1 : 0)),
+    refetchInterval: (query) =>
+      getKdsRefetchInterval(
+        query.state.fetchFailureCount + (query.state.data?.degraded ? 1 : 0),
+      ),
   });
   const [lastRefresh, setLastRefresh] = useState(new Date());
 
   useEffect(() => {
     if (!dataUpdatedAt) return;
-    setLastRefresh(board?.generatedAt ? new Date(board.generatedAt) : new Date(dataUpdatedAt));
+    setLastRefresh(
+      board?.generatedAt
+        ? new Date(board.generatedAt)
+        : new Date(dataUpdatedAt),
+    );
   }, [board?.generatedAt, dataUpdatedAt]);
 
   const refresh = () => {
@@ -329,9 +346,13 @@ export default function KitchenDisplay() {
     setLastRefresh(new Date());
   };
 
-  const pendingOrders = board?.columns.find((column) => column.status === "pending")?.orders ?? [];
-  const preparingOrders = board?.columns.find((column) => column.status === "preparing")?.orders ?? [];
-  const readyOrders = board?.columns.find((column) => column.status === "ready")?.orders ?? [];
+  const pendingOrders =
+    board?.columns.find((column) => column.status === "pending")?.orders ?? [];
+  const preparingOrders =
+    board?.columns.find((column) => column.status === "preparing")?.orders ??
+    [];
+  const readyOrders =
+    board?.columns.find((column) => column.status === "ready")?.orders ?? [];
   const total = board?.total ?? 0;
 
   return (
@@ -378,9 +399,15 @@ export default function KitchenDisplay() {
             <div className="mb-4 flex flex-col gap-3 rounded-3xl border border-amber-300/70 bg-amber-100/80 px-4 py-3 text-sm font-bold text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-100 sm:flex-row sm:items-center sm:justify-between">
               <span>
                 <AlertTriangle className="mr-2 inline h-4 w-4" /> KDS 降級模式：
-                {board.error.message || "資料庫暫時不可用，已顯示空板並自動退避重試。"}
+                {board.error.message ||
+                  "資料庫暫時不可用，已顯示空板並自動退避重試。"}
               </span>
-              <Button variant="outline" size="sm" onClick={refresh} className="min-h-10 rounded-2xl bg-background/80 text-foreground">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={refresh}
+                className="min-h-10 rounded-2xl bg-background/80 text-foreground"
+              >
                 立即重試
               </Button>
             </div>
@@ -389,9 +416,17 @@ export default function KitchenDisplay() {
             <div className="mb-4 flex flex-col gap-3 rounded-3xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-bold text-destructive sm:flex-row sm:items-center sm:justify-between">
               <span>
                 <AlertTriangle className="mr-2 inline h-4 w-4" /> KDS 讀取失敗：
-                {getSafeErrorMessage(error, "KDS 暫時無法讀取訂單，可能是 API 逾時，請重新整理。")}
+                {getSafeErrorMessage(
+                  error,
+                  "KDS 暫時無法讀取訂單，可能是 API 逾時，請重新整理。",
+                )}
               </span>
-              <Button variant="outline" size="sm" onClick={refresh} className="min-h-10 rounded-2xl bg-background/80 text-foreground">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={refresh}
+                className="min-h-10 rounded-2xl bg-background/80 text-foreground"
+              >
                 重試
               </Button>
             </div>
@@ -412,7 +447,8 @@ export default function KitchenDisplay() {
                 廚房目前沒有待處理訂單
               </h2>
               <p className="mt-2 text-sm text-muted-foreground">
-                新訂單建立後會自動出現在這裡，連線正常時每 30 秒同步一次；失敗時會自動退避，避免重複打 API。
+                新訂單建立後會自動出現在這裡，連線正常時每 30
+                秒同步一次；失敗時會自動退避，避免重複打 API。
               </p>
             </div>
           ) : (

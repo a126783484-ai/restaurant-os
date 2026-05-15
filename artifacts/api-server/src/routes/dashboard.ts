@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { gte, eq, sql } from "drizzle-orm";
+import { gte, sql } from "drizzle-orm";
 import {
   db,
   isDatabaseConfigured,
@@ -9,6 +9,7 @@ import {
   customersTable,
   reservationsTable,
   visitsTable,
+  pool,
 } from "@workspace/db";
 import {
   getRuntimeCustomerFlow,
@@ -64,31 +65,39 @@ router.get("/dashboard/summary", async (_req, res, next): Promise<void> => {
   try {
     const today = startOfDay();
     const week = sevenDaysAgo();
-    const paymentSummary = await getPaymentSummary({ from: today.toISOString(), to: new Date().toISOString() });
-    const weekSummary = await getPaymentSummary({ from: week.toISOString(), to: new Date().toISOString() });
+    const now = new Date().toISOString();
 
-    const todayVisits = await db
-      .select()
-      .from(visitsTable)
-      .where(gte(visitsTable.visitedAt, today));
+    const [
+      paymentSummary,
+      weekSummary,
+      todayVisits,
+      customerStats,
+      pendingOrders,
+      activeReservations,
+    ] = await Promise.all([
+      getPaymentSummary({ from: today.toISOString(), to: now }),
+      getPaymentSummary({ from: week.toISOString(), to: now }),
+      db.select({ customerId: visitsTable.customerId })
+        .from(visitsTable)
+        .where(gte(visitsTable.visitedAt, today)),
+      pool.query<{ total: number; repeat_count: number }>(
+        `SELECT
+           COUNT(*)::int AS total,
+           COUNT(*) FILTER (WHERE visit_count > 1)::int AS repeat_count
+         FROM customers`,
+      ),
+      pool.query<{ count: number }>(
+        "SELECT COUNT(*)::int AS count FROM orders WHERE status = 'pending'",
+      ),
+      pool.query<{ count: number }>(
+        "SELECT COUNT(*)::int AS count FROM reservations WHERE status = ANY('{pending,confirmed,seated}'::text[])",
+      ),
+    ]);
+
     const customerIds = new Set(todayVisits.map((visit) => visit.customerId));
-    const activeTodayOrders = paymentSummary.unpaidOrderList.concat(paymentSummary.partiallyPaidOrderList, paymentSummary.paidOrderList);
-    for (const order of activeTodayOrders) {
-      // Customer ids are not part of the payment summary; visits remain the source of truth for known customers.
-      void order;
-    }
-
-    const allCustomers = await db.select().from(customersTable);
-    const repeatCustomers = allCustomers.filter((customer) => customer.visitCount > 1).length;
-    const repeatCustomerRate = allCustomers.length > 0 ? (repeatCustomers / allCustomers.length) * 100 : 0;
-    const pendingOrders = await db
-      .select()
-      .from(ordersTable)
-      .where(eq(ordersTable.status, "pending"));
-    const activeReservations = await db
-      .select()
-      .from(reservationsTable)
-      .where(sql`${reservationsTable.status} IN ('pending', 'confirmed', 'seated')`);
+    const totalCustomers = Number(customerStats.rows[0]?.total ?? 0);
+    const repeatCustomers = Number(customerStats.rows[0]?.repeat_count ?? 0);
+    const repeatCustomerRate = totalCustomers > 0 ? (repeatCustomers / totalCustomers) * 100 : 0;
 
     res.json({
       todaySales: roundMoney(paymentSummary.totalCollected),
@@ -108,8 +117,8 @@ router.get("/dashboard/summary", async (_req, res, next): Promise<void> => {
       todayOrders: paymentSummary.orderCount,
       todayCustomers: customerIds.size,
       repeatCustomerRate: Math.round(repeatCustomerRate * 10) / 10,
-      pendingOrders: pendingOrders.length,
-      activeReservations: activeReservations.length,
+      pendingOrders: Number(pendingOrders.rows[0]?.count ?? 0),
+      activeReservations: Number(activeReservations.rows[0]?.count ?? 0),
       weekSales: roundMoney(weekSummary.totalCollected),
       partial: Boolean(paymentSummary.partial || weekSummary.partial),
       degradedOrderCount: Number(paymentSummary.degradedOrderCount ?? 0) + Number(weekSummary.degradedOrderCount ?? 0),

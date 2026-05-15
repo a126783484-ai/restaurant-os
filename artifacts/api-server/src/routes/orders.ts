@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Response } from "express";
-import { eq, and, gte, lte, sql } from "drizzle-orm";
+import { eq, and, gte, lte, sql, inArray } from "drizzle-orm";
 import {
   db,
   isDatabaseConfigured,
@@ -79,6 +79,20 @@ type Queryable = { query: (text: string, params?: unknown[]) => Promise<{ rows: 
 function roundMoney(value: unknown): number {
   const amount = Number(value ?? 0);
   return Number.isFinite(amount) ? Math.round(amount * 100) / 100 : 0;
+}
+
+function sendError(
+  res: Response,
+  status: number,
+  code: string,
+  message: string,
+): void {
+  res.status(status).json({
+    ok: false,
+    error: { code, message },
+    message,
+    timestamp: new Date().toISOString(),
+  });
 }
 
 async function syncTableAfterTerminalOrderWithClient(client: Queryable, tableId: number | null | undefined) {
@@ -211,20 +225,6 @@ async function updateDbOrderStatusOnly(input: {
   } finally {
     client.release();
   }
-}
-
-function sendError(
-  res: Response,
-  status: number,
-  code: string,
-  message: string,
-): void {
-  res.status(status).json({
-    ok: false,
-    error: { code, message },
-    message,
-    timestamp: new Date().toISOString(),
-  });
 }
 
 async function ensureOrderSchema(): Promise<void> {
@@ -369,13 +369,17 @@ function normalizeUpdate(data: Record<string, unknown>): NormalizeUpdateResult {
 async function buildDbItems(
   items: Array<{ productId: number; quantity: number; notes?: string | null }>,
 ) {
+  const productIds = [...new Set(items.map((i) => i.productId))];
+  const products = await db
+    .select()
+    .from(productsTable)
+    .where(inArray(productsTable.id, productIds));
+  const productMap = new Map(products.map((p) => [p.id, p]));
+
   let totalAmount = 0;
   const enrichedItems = [];
   for (const item of items) {
-    const [product] = await db
-      .select()
-      .from(productsTable)
-      .where(eq(productsTable.id, item.productId));
+    const product = productMap.get(item.productId);
     if (!product)
       throw Object.assign(new Error(`Product ${item.productId} not found`), {
         statusCode: 400,
@@ -406,14 +410,19 @@ async function buildDbItemsWithClient(
   client: { query: (text: string, params?: unknown[]) => Promise<{ rows: any[] }> },
   items: Array<{ productId: number; quantity: number; notes?: string | null }>,
 ) {
+  const productIds = [...new Set(items.map((i) => i.productId))];
+  const productResult = await client.query(
+    "SELECT id, name, price FROM products WHERE id = ANY($1::int[])",
+    [productIds],
+  );
+  const productMap = new Map<number, { id: number; name: string; price: number }>(
+    productResult.rows.map((p) => [Number(p.id), { id: Number(p.id), name: p.name, price: Number(p.price) }]),
+  );
+
   let totalAmount = 0;
   const enrichedItems = [];
   for (const item of items) {
-    const productResult = await client.query(
-      "SELECT id, name, price FROM products WHERE id = $1 LIMIT 1",
-      [item.productId],
-    );
-    const product = productResult.rows[0];
+    const product = productMap.get(item.productId);
     if (!product) {
       throw Object.assign(new Error(`Product ${item.productId} not found`), {
         statusCode: 400,
@@ -424,7 +433,7 @@ async function buildDbItemsWithClient(
     const snapshot = buildOrderItemSnapshot({
       productId: item.productId,
       productName: product.name,
-      unitPrice: Number(product.price),
+      unitPrice: product.price,
       quantity,
       notes: item.notes ?? null,
     });
@@ -535,6 +544,32 @@ async function syncTableAfterTerminalOrder(tableId: number | null | undefined) {
   }
 }
 
+async function batchFetchPaymentSummaries(
+  orderIds: number[],
+): Promise<Map<number, { chargeAmount: number; refundAmount: number; paymentCount: number }>> {
+  if (orderIds.length === 0) return new Map();
+  const result = await pool.query(
+    `SELECT
+       order_id,
+       COALESCE(SUM(amount) FILTER (WHERE status = 'paid'),     0)::float AS charge_amount,
+       COALESCE(SUM(amount) FILTER (WHERE status = 'refunded'), 0)::float AS refund_amount,
+       COUNT(*)::int AS payment_count
+     FROM payments
+     WHERE order_id = ANY($1::int[])
+     GROUP BY order_id`,
+    [orderIds],
+  );
+  const map = new Map<number, { chargeAmount: number; refundAmount: number; paymentCount: number }>();
+  for (const row of result.rows) {
+    map.set(Number(row.order_id), {
+      chargeAmount: Number(row.charge_amount),
+      refundAmount: Number(row.refund_amount),
+      paymentCount: Number(row.payment_count),
+    });
+  }
+  return map;
+}
+
 router.get("/orders", async (req, res, next): Promise<void> => {
   const parsed = ListOrdersQueryParams.safeParse(req.query);
   if (!parsed.success) {
@@ -550,6 +585,7 @@ router.get("/orders", async (req, res, next): Promise<void> => {
 
   try {
     await ensureOrderSchema();
+
     const conditions = [];
     if (status) conditions.push(eq(ordersTable.status, status));
     if (type) conditions.push(eq(ordersTable.type, type));
@@ -572,11 +608,66 @@ router.get("/orders", async (req, res, next): Promise<void> => {
             .from(ordersTable)
             .orderBy(sql`${ordersTable.createdAt} DESC`);
 
-    const enrichedOrders = await Promise.all(
-      orders.map((order) =>
-        attachResilientPaymentSummary(order, calculateOrderPaymentSummary),
-      ),
-    );
+    if (orders.length === 0) {
+      res.json([]);
+      return;
+    }
+
+    const orderIds = orders.map((order) => order.id);
+    let paymentMap = new Map<number, { chargeAmount: number; refundAmount: number; paymentCount: number }>();
+    let paymentSummaryUnavailable = false;
+
+    try {
+      paymentMap = await batchFetchPaymentSummaries(orderIds);
+    } catch (paymentError) {
+      paymentSummaryUnavailable = true;
+      console.error("[orders] batch payment summary failed, using order-level fallback", paymentError);
+    }
+
+    const enrichedOrders = orders.map((order) => {
+      const totalAmount = roundMoney(order.totalAmount ?? 0);
+
+      if (paymentSummaryUnavailable) {
+        const paidAmount = roundMoney(order.paidAmount ?? 0);
+        return {
+          ...order,
+          paidAmount,
+          balance: Math.max(roundMoney(totalAmount - paidAmount), 0),
+          paymentStatus: order.paymentStatus ?? "unpaid",
+          paymentCount: 0,
+          paymentSummaryUnavailable: true,
+          paymentSummaryErrorCode: "PAYMENT_SUMMARY_UNAVAILABLE",
+          paymentSummaryErrorMessage: "Payment summary could not be calculated for this order.",
+        };
+      }
+
+      const paymentSummary = paymentMap.get(order.id);
+      const netPaid = paymentSummary
+        ? Math.max(roundMoney(paymentSummary.chargeAmount - paymentSummary.refundAmount), 0)
+        : 0;
+      const balance = Math.max(roundMoney(totalAmount - netPaid), 0);
+
+      let paymentStatus: string;
+      if (order.status === "cancelled") {
+        paymentStatus = netPaid > 0 ? "refunded" : "cancelled";
+      } else if (netPaid <= 0) {
+        paymentStatus = "unpaid";
+      } else if (balance > 0) {
+        paymentStatus = "partially_paid";
+      } else {
+        paymentStatus = "paid";
+      }
+
+      return {
+        ...order,
+        paidAmount: netPaid,
+        balance,
+        paymentStatus,
+        paymentCount: paymentSummary?.paymentCount ?? 0,
+        paymentSummaryUnavailable: false,
+      };
+    });
+
     res.json(enrichedOrders);
   } catch (error) {
     next(error);
@@ -817,7 +908,13 @@ router.patch("/orders/:id", async (req, res, next): Promise<void> => {
   try {
     await ensureOrderSchema();
     const updateKeys = Object.keys(update);
-    if (!items && updateKeys.length === 1 && typeof update.status === "string" && normalizeOrderStatus(update.status) !== "cancelled") {
+    if (
+      !items &&
+      updateKeys.length === 1 &&
+      typeof update.status === "string" &&
+      normalizeOrderStatus(update.status) !== "completed" &&
+      normalizeOrderStatus(update.status) !== "cancelled"
+    ) {
       const order = await updateDbOrderStatusOnly({
         id: params.data.id,
         status: update.status,
@@ -832,6 +929,13 @@ router.patch("/orders/:id", async (req, res, next): Promise<void> => {
       sendError(res, 404, "ORDER_NOT_FOUND", "Order not found.");
       return;
     }
+
+    const actor = getRequestUser(req);
+    const statusBecomesTerminal =
+      typeof update.status === "string" &&
+      existing.status !== update.status &&
+      (normalizeOrderStatus(update.status) === "completed" ||
+        normalizeOrderStatus(update.status) === "cancelled");
 
     if (typeof update.status === "string") {
       assertOrderTransition(existing.status, update.status);
@@ -863,23 +967,26 @@ router.patch("/orders/:id", async (req, res, next): Promise<void> => {
       .where(eq(ordersTable.id, params.data.id))
       .returning();
 
-    if (items || update.status === "cancelled" || update.status === "completed") {
-      await syncOrderPaymentSummary(order.id, getRequestUser(req));
-      if (update.status === "cancelled" || update.status === "completed") {
-        await syncTableAfterTerminalOrder(existing.tableId);
-      }
+    if (!order) {
+      sendError(res, 404, "ORDER_NOT_FOUND", "Order not found.");
+      return;
     }
-    if (items || update.status === "cancelled" || update.status === "completed") {
-      await writeAuditLog({
-        actor: getRequestUser(req),
-        action: items ? "order.items_updated" : update.status === "completed" ? "order.completed" : "order.cancelled",
-        entityType: "order",
-        entityId: order.id,
-        before: beforeAudit,
-        after: await getDbOrder(order.id),
-      });
+    if (order.status === "completed" || order.status === "cancelled") {
+      await syncTableAfterTerminalOrder(order.tableId);
     }
-    res.json(await getDbOrder(order.id));
+    if (items || statusBecomesTerminal) {
+      await syncOrderPaymentSummary(order.id, actor);
+    }
+    const updated = await getDbOrder(order.id);
+    await writeAuditLog({
+      actor,
+      action: order.status === "completed" ? "order.completed" : order.status === "cancelled" ? "order.cancelled" : "order.updated",
+      entityType: "order",
+      entityId: order.id,
+      before: beforeAudit,
+      after: updated ?? order,
+    });
+    res.json(updated ?? order);
   } catch (error: any) {
     if (error?.statusCode) {
       sendError(res, error.statusCode, error.code ?? "ORDER_UPDATE_INVALID", error.message);

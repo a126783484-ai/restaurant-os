@@ -68,7 +68,7 @@ function getErrorMessage(data: AuthResponse, fallback: string): string {
   return typeof data.message === "string" ? data.message : fallback;
 }
 
-async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs = 12_000): Promise<Response> {
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs = 20_000): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {

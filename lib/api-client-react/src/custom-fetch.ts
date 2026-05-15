@@ -364,7 +364,7 @@ export async function customFetch<T = unknown>(
   }
 
   const requestInfo = { method, url: resolveUrl(input) };
-  const timeoutMs = Number((globalThis as typeof globalThis & { __RESTAURANT_OS_API_TIMEOUT_MS__?: number }).__RESTAURANT_OS_API_TIMEOUT_MS__ ?? 12_000);
+  const timeoutMs = Number((globalThis as typeof globalThis & { __RESTAURANT_OS_API_TIMEOUT_MS__?: number }).__RESTAURANT_OS_API_TIMEOUT_MS__ ?? 20_000);
   const controller = !init.signal && Number.isFinite(timeoutMs) && timeoutMs > 0 ? new AbortController() : null;
   const timeout = controller
     ? setTimeout(() => controller.abort(new Error(`API request timed out after ${timeoutMs}ms.`)), timeoutMs)

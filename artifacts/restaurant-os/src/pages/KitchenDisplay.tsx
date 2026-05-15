@@ -65,6 +65,17 @@ const ORDER_TYPE_LABELS: Record<string, string> = {
   takeout: "外帶",
 };
 
+const KDS_BASE_REFETCH_INTERVAL_MS = 30_000;
+const KDS_MAX_REFETCH_INTERVAL_MS = 5 * 60_000;
+
+function getKdsRefetchInterval(failureCount: number) {
+  if (failureCount <= 0) return KDS_BASE_REFETCH_INTERVAL_MS;
+  return Math.min(
+    KDS_BASE_REFETCH_INTERVAL_MS * 2 ** Math.min(failureCount, 4),
+    KDS_MAX_REFETCH_INTERVAL_MS,
+  );
+}
+
 function elapsedMinutes(createdAt: string) {
   return Math.max(
     0,
@@ -121,7 +132,6 @@ function KDSCard({
       { id: order.id, data: { status: next } },
       {
         onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: ["kds-board"] });
           queryClient.invalidateQueries({ queryKey: getListOrdersQueryKey() });
           queryClient.invalidateQueries({
             queryKey: getGetOrderQueryKey(order.id),
@@ -132,7 +142,6 @@ function KDSCard({
           onAdvance();
         },
         onError: () => {
-          queryClient.invalidateQueries({ queryKey: ["kds-board"] });
           queryClient.invalidateQueries({ queryKey: getGetOrderQueryKey(order.id) });
         },
       },
@@ -297,28 +306,22 @@ export default function KitchenDisplay() {
     isLoading: loading,
     error,
     refetch,
+    dataUpdatedAt,
   } = useQuery({
     queryKey: ["kds-board"],
     queryFn: getKdsBoard,
     retry: 1,
+    refetchInterval: (query) => getKdsRefetchInterval(query.state.fetchFailureCount + (query.state.data?.degraded ? 1 : 0)),
   });
   const [lastRefresh, setLastRefresh] = useState(new Date());
 
   useEffect(() => {
-    const id = setInterval(() => {
-      queryClient.invalidateQueries({ queryKey: ["kds-board"] });
-      queryClient.invalidateQueries({ queryKey: getListOrdersQueryKey() });
-      queryClient.invalidateQueries({
-        queryKey: getGetDashboardSummaryQueryKey(),
-      });
-      setLastRefresh(new Date());
-    }, 30000);
-    return () => clearInterval(id);
-  }, [queryClient]);
+    if (!dataUpdatedAt) return;
+    setLastRefresh(board?.generatedAt ? new Date(board.generatedAt) : new Date(dataUpdatedAt));
+  }, [board?.generatedAt, dataUpdatedAt]);
 
   const refresh = () => {
-    refetch();
-    queryClient.invalidateQueries({ queryKey: ["kds-board"] });
+    void refetch();
     queryClient.invalidateQueries({ queryKey: getListOrdersQueryKey() });
     queryClient.invalidateQueries({
       queryKey: getGetDashboardSummaryQueryKey(),
@@ -371,7 +374,18 @@ export default function KitchenDisplay() {
 
       <div className="flex-1 overflow-y-auto p-4 sm:p-6">
         <div className="mx-auto max-w-7xl">
-          {error && (
+          {board?.error && (
+            <div className="mb-4 flex flex-col gap-3 rounded-3xl border border-amber-300/70 bg-amber-100/80 px-4 py-3 text-sm font-bold text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-100 sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                <AlertTriangle className="mr-2 inline h-4 w-4" /> KDS 降級模式：
+                {board.error.message || "資料庫暫時不可用，已顯示空板並自動退避重試。"}
+              </span>
+              <Button variant="outline" size="sm" onClick={refresh} className="min-h-10 rounded-2xl bg-background/80 text-foreground">
+                立即重試
+              </Button>
+            </div>
+          )}
+          {error && !board?.error && (
             <div className="mb-4 flex flex-col gap-3 rounded-3xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-bold text-destructive sm:flex-row sm:items-center sm:justify-between">
               <span>
                 <AlertTriangle className="mr-2 inline h-4 w-4" /> KDS 讀取失敗：
@@ -398,7 +412,7 @@ export default function KitchenDisplay() {
                 廚房目前沒有待處理訂單
               </h2>
               <p className="mt-2 text-sm text-muted-foreground">
-                新訂單建立後會自動出現在這裡，每 30 秒同步一次。
+                新訂單建立後會自動出現在這裡，連線正常時每 30 秒同步一次；失敗時會自動退避，避免重複打 API。
               </p>
             </div>
           ) : (

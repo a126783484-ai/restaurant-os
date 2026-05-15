@@ -3,6 +3,7 @@ import { eq, and, gte, lte, sql, inArray } from "drizzle-orm";
 import {
   db,
   isDatabaseConfigured,
+  isDatabaseUnavailableError,
   orderItemsTable,
   ordersTable,
   pool,
@@ -702,6 +703,24 @@ router.get("/orders/kds", async (_req, res, next): Promise<void> => {
       generatedAt: new Date().toISOString(),
     });
   } catch (error) {
+    if (isDatabaseUnavailableError(error)) {
+      const message = error instanceof Error ? error.message : "Database unavailable while loading KDS board.";
+      res.status(503).json({
+        ok: false,
+        sourceOfTruth: "backend-order-domain",
+        activeStatuses: KDS_ACTIVE_ORDER_STATUSES,
+        total: 0,
+        columns: groupKdsOrdersByStatus([]),
+        generatedAt: new Date().toISOString(),
+        degraded: true,
+        error: {
+          code: "DATABASE_UNAVAILABLE",
+          message,
+        },
+      });
+      return;
+    }
+
     next(error);
   }
 });

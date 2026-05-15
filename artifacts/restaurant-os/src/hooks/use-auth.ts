@@ -146,7 +146,10 @@ export async function validateStoredSession(): Promise<AuthUser> {
 
   const data = (await res.json().catch(() => ({}))) as AuthResponse;
   if (!res.ok) {
-    clearToken();
+    // 只有 401（token 確實無效）才清除，其他錯誤（網路/503）保留 token 避免無限重導向
+    if (res.status === 401 || res.status === 403) {
+      clearToken();
+    }
     throw new Error(getErrorMessage(data, "登入已失效，請重新登入。"));
   }
 
@@ -170,6 +173,11 @@ export function useAuthSession() {
       return;
     }
 
+    // 若已有快取的使用者資料，先顯示，背景驗證
+    if (getCurrentUser()) {
+      setLoading(false);
+    }
+
     let cancelled = false;
     validateStoredSession()
       .then((sessionUser) => {
@@ -180,7 +188,10 @@ export function useAuthSession() {
       })
       .catch((err) => {
         if (!cancelled) {
-          setUser(null);
+          // 若 token 已被 clearToken() 清除（401/403），才清除 user 狀態
+          if (!getToken()) {
+            setUser(null);
+          }
           setError(err instanceof Error ? err.message : "登入已失效，請重新登入。");
         }
       })
@@ -191,7 +202,7 @@ export function useAuthSession() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { user, loading, error };
 }

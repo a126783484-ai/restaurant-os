@@ -146,7 +146,6 @@ function KDSCard({
           queryClient.invalidateQueries({
             queryKey: getGetOrderQueryKey(order.id),
           });
-          onAdvance();
         },
       },
     );

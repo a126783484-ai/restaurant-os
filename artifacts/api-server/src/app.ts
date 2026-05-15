@@ -143,9 +143,30 @@ const defaultCorsOrigins = [
 
 const allowedCorsOrigins = new Set([...defaultCorsOrigins, ...configuredCorsOrigins]);
 
+function isAllowedVercelFrontendOrigin(origin: string): boolean {
+  try {
+    const { hostname, protocol } = new URL(origin);
+    return (
+      protocol === "https:" &&
+      hostname.endsWith(".vercel.app") &&
+      (
+        hostname.startsWith("restaurant-os-restaurant-") ||
+        hostname.startsWith("restaurant-os-restaurant-os-")
+      )
+    );
+  } catch {
+    return false;
+  }
+}
+
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || allowedCorsOrigins.has(origin) || !isProductionRuntime()) {
+    if (
+      !origin ||
+      allowedCorsOrigins.has(origin) ||
+      isAllowedVercelFrontendOrigin(origin) ||
+      !isProductionRuntime()
+    ) {
       callback(null, true);
       return;
     }
